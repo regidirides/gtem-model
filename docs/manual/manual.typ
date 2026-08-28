@@ -1223,6 +1223,13 @@ language has the same keys and the same `{placeholders}` as English.
 #table(
   columns: (auto, 1fr), stroke: 0.4pt + luma(200), inset: 6pt,
   table.header([*Symptom*], [*Cause and cure*]),
+  [`JVM DLL not found` — but the file is there],
+    [Python and NetLogo's Java runtime are built for different processors. On an
+     Apple Silicon Mac this usually means an Intel build of Python, often
+     Anaconda under `/opt/anaconda3`, running under Rosetta. Check with
+     `python -c "import platform; print(platform.machine())"`: it must print
+     `arm64`. Recreate the environment with Miniforge if it does not.
+     `check_environment.py` now reports this before you run anything.],
   [`No NetLogo installation was found`],
     [NetLogo is missing or installed elsewhere. Install 7.0.4, or set
      `NETLOGO_HOME` to its folder. The error lists the places GTEM looked.],

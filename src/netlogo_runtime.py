@@ -101,6 +101,103 @@ def describe_environment() -> str:
     )
 
 
+#: Mach-O CPU types we care about on macOS.
+_CPU_TYPES = {0x01000007: "x86_64", 0x0100000C: "arm64",
+              0x00000007: "i386", 0x0000000C: "arm"}
+
+
+def library_architectures(path: str | os.PathLike) -> list[str]:
+    """Architectures inside a Mach-O library, read from its header.
+
+    Used to explain a JVM that exists but will not load. Returns [] on any
+    other platform or on an unrecognised file, so callers must treat an empty
+    list as "unknown", never as "incompatible".
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(4096)
+    except OSError:
+        return []
+    if len(head) < 8:
+        return []
+    magic = head[:4]
+    if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe"):   # thin
+        return [_CPU_TYPES.get(int.from_bytes(head[4:8], "little"), "unknown")]
+    if magic in (b"\xca\xfe\xba\xbe", b"\xca\xfe\xba\xbf"):   # universal
+        width = 20 if magic.endswith(b"\xbe") else 32
+        count = min(int.from_bytes(head[4:8], "big"), 16)
+        found = []
+        for i in range(count):
+            start = 8 + i * width
+            if start + 4 > len(head):
+                break
+            found.append(_CPU_TYPES.get(
+                int.from_bytes(head[start:start + 4], "big"), "unknown"))
+        return found
+    return []
+
+
+def diagnose_jvm_failure(jvm_path: str, error: BaseException) -> str:
+    """Explain why a JVM that exists on disk could not be loaded.
+
+    JPype reports a failed dlopen as "JVM DLL not found", which sends people
+    looking for a missing file when the file is plainly there. On macOS the
+    usual cause is an architecture mismatch: an Intel Python cannot load an
+    Apple-Silicon JVM, or the reverse.
+    """
+    lines = [f"NetLogo's Java runtime could not be loaded:", f"  {jvm_path}"]
+    if not Path(jvm_path).is_file():
+        lines.append("")
+        lines.append("The file is missing. Reinstall NetLogo, or point "
+                     "NETLOGO_HOME at the right folder.")
+        return "\n".join(lines)
+
+    lines.append("")
+    lines.append("The file exists, so this is a load failure, not a missing file.")
+    host = platform.machine()
+    have = library_architectures(jvm_path)
+    if have:
+        lines.append(f"  Python is running as : {host}")
+        lines.append(f"  That Java runtime is : {', '.join(have)}")
+    if have and host not in have:
+        lines.append("")
+        lines.append("THESE DO NOT MATCH, which is almost certainly the problem.")
+        lines.append("A Python interpreter cannot load a library built for a "
+                     "different processor.")
+        lines.append("")
+        if host == "x86_64" and "arm64" in have:
+            lines.append("You are on an Intel build of Python on an Apple Silicon "
+                         "Mac. Anaconda installed at /opt/anaconda3 is commonly "
+                         "the Intel build, and it runs under Rosetta.")
+            lines.append("")
+            lines.append("Fix: recreate the environment with a native arm64 "
+                         "Python. Miniforge is the simplest route:")
+            lines.append("  https://github.com/conda-forge/miniforge")
+            lines.append("  conda env create -f environment.yml")
+            lines.append("  conda activate gtem")
+            lines.append("")
+            lines.append("Check afterwards with:")
+            lines.append('  python -c "import platform; print(platform.machine())"')
+            lines.append("It must print arm64.")
+        else:
+            lines.append("Install a Python whose architecture matches the Java "
+                         "runtime, or a NetLogo build that matches your Python.")
+    elif not have:
+        lines.append("")
+        lines.append("The architecture could not be read from the file, so the "
+                     "cause is unclear. It may be quarantined by macOS "
+                     "(xattr -d com.apple.quarantine \"<path>\"), or unreadable.")
+    else:
+        lines.append("")
+        lines.append("The architectures match, so something else is wrong. Check "
+                     "that the file is readable, and that macOS has not "
+                     "quarantined it:")
+        lines.append(f'  xattr -l "{jvm_path}"')
+    lines.append("")
+    lines.append(f"Underlying error: {type(error).__name__}: {error}")
+    return "\n".join(lines)
+
+
 def create_netlogo_link(
     *,
     netlogo_home: str,
@@ -132,7 +229,10 @@ def create_netlogo_link(
         if not any(a.startswith("-Djava.awt.headless") for a in args):
             args.append("-Djava.awt.headless=true")
 
-        jpype.startJVM(*args, jvmpath=jvm_path, classpath=jars)
+        try:
+            jpype.startJVM(*args, jvmpath=jvm_path, classpath=jars)
+        except Exception as exc:  # noqa: BLE001 - re-raised with a diagnosis
+            raise RuntimeError(diagnose_jvm_failure(jvm_path, exc)) from exc
 
     extensions = Path(netlogo_home) / "extensions"
     if extensions.is_dir():

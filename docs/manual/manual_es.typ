@@ -1305,6 +1305,14 @@ inglés.
 #table(
   columns: (auto, 1fr), stroke: 0.4pt + luma(200), inset: 6pt,
   table.header([*Síntoma*], [*Causa y solución*]),
+  [`JVM DLL not found`, pero el archivo sí existe],
+    [Python y el motor Java de NetLogo están compilados para procesadores
+     distintos. En una Mac con Apple Silicon esto suele significar una versión
+     Intel de Python, con frecuencia Anaconda en `/opt/anaconda3`, ejecutándose
+     bajo Rosetta. Verifique con
+     `python -c "import platform; print(platform.machine())"`: debe imprimir
+     `arm64`. Si no, vuelva a crear el entorno con Miniforge.
+     `check_environment.py` ahora detecta esto antes de ejecutar nada.],
   [`No NetLogo installation was found`],
     [NetLogo no está instalado o está en otra ubicación. Instale la versión
      7.0.4, o defina `NETLOGO_HOME` apuntando a su carpeta. El error enumera los

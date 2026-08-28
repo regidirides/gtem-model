@@ -25,7 +25,13 @@ import platform
 import sys
 from pathlib import Path
 
-from netlogo_runtime import detect_netlogo_home, describe_environment, jvm_library_path
+from netlogo_runtime import (
+    detect_netlogo_home,
+    describe_environment,
+    diagnose_jvm_failure as describe_jvm_failure,
+    jvm_library_path,
+    library_architectures,
+)
 from version import TESTED_JAVA, TESTED_NETLOGO, VERSION_STAMP
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -96,8 +102,40 @@ def check_netlogo() -> list[str]:
     if jvm is None:
         print(f"{BAD} JVM            no JVM library inside that NetLogo install")
         problems.append("Reinstall NetLogo; its bundled Java runtime is missing.")
-    else:
-        print(f"{OK} JVM            {Path(jvm).name}")
+        return problems
+
+    # Presence is not enough - see the note at the top of this file. A JVM can
+    # sit on disk and still refuse to load, most often because Python and the
+    # runtime were built for different processors. Compare first, because the
+    # comparison is instant and gives a far better message than a failed load.
+    host = platform.machine()
+    architectures = library_architectures(jvm)
+    if architectures and host not in architectures:
+        print(f"{BAD} JVM            {Path(jvm).name} is "
+              f"{', '.join(architectures)}, but Python is {host}")
+        print(f"         A {host} Python cannot load a "
+              f"{'/'.join(architectures)} Java runtime.")
+        problems.append(
+            f"Recreate the environment with a {'/'.join(architectures)} Python "
+            "(Miniforge is the simplest on Apple Silicon), then "
+            "conda env create -f environment.yml")
+        return problems
+
+    detail = f" ({', '.join(architectures)})" if architectures else ""
+    print(f"{OK} JVM            {Path(jvm).name}{detail}")
+
+    # Then actually start it. This is the only check that proves the pair works.
+    try:
+        import jpype
+        if not jpype.isJVMStarted():
+            jpype.startJVM("-Djava.awt.headless=true", jvmpath=jvm)
+        print(f"{OK} JVM starts     "
+              f"Java {jpype.java.lang.System.getProperty('java.version')}")
+    except Exception as exc:  # noqa: BLE001 - any failure here is a real problem
+        print(f"{BAD} JVM starts     it will not load")
+        for line in describe_jvm_failure(jvm, exc).splitlines():
+            print(f"         {line}")
+        problems.append("The Java runtime inside NetLogo will not load; see above.")
     return problems
 
 
