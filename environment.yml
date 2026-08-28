@@ -9,6 +9,20 @@
 #
 # NetLogo itself is NOT a conda package and must be installed separately.
 # See requirements.txt for the per-platform install locations.
+#
+# APPLE SILICON: the environment must be arm64.
+#   NetLogo ships an arm64 Java runtime on Apple Silicon, and an Intel build of
+#   Python cannot load it - the run fails with "JVM DLL not found" naming a file
+#   that is plainly there. Anaconda installed at /opt/anaconda3 is commonly the
+#   Intel build and produces Intel environments by default.
+#
+#   Either use a native arm64 conda (Miniforge), or force the architecture:
+#       CONDA_SUBDIR=osx-arm64 conda env create -f environment.yml
+#       conda activate gtem
+#       conda config --env --set subdir osx-arm64
+#
+#   Confirm with:  python -c "import platform; print(platform.machine())"
+#   It must print arm64. check_environment.py also reports this.
 
 name: gtem
 

@@ -298,6 +298,25 @@ conda activate gtem
 El primer comando descarga e instala todo lo que GTEM necesita y demora algunos
 minutos. El segundo cambia su terminal a ese entorno.
 
+#warn("En una Mac con Apple Silicon, el entorno debe ser arm64")[
+  NetLogo incluye un motor Java arm64 en Apple Silicon, y una versión Intel de
+  Python no puede cargarlo. La corrida falla entonces con `JVM DLL not found`,
+  nombrando un archivo que sí existe.
+
+  Anaconda instalado en `/opt/anaconda3` suele ser la versión Intel y crea
+  entornos Intel por omisión. Instale Miniforge, que es arm64, o fuerce la
+  arquitectura:
+
+  ```bash
+  CONDA_SUBDIR=osx-arm64 conda env create -f environment.yml
+  conda activate gtem
+  conda config --env --set subdir osx-arm64
+  ```
+
+  `python check_environment.py` informa la arquitectura de ambos, de modo que
+  usted verá esto antes de ejecutar una simulación y no después.
+]
+
 #tip("Debe activar el entorno en cada terminal nueva")[
   `conda activate gtem` solo se aplica a la ventana donde lo escribe. Si cierra
   la terminal y abre otra, vuelva a ejecutarlo. Si de pronto un comando informa
