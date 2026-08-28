@@ -1,0 +1,12 @@
+# Extra dependencies for the one-off helpers in tools/.
+#
+# NOT needed to run GTEM. Install only if you are rebuilding a road network
+# from a rasterised street layer:
+#     pip install -r requirements-tools.txt
+#
+# tools/rebuild_network_from_raster.py imports these. They are kept separate so
+# that running GTEM does not require a raster/image-processing stack.
+
+rasterio==1.4.3
+scikit-image==0.25.2
+sknw==0.15

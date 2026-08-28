@@ -1,0 +1,27 @@
+Checking /home/you/gtem/data/Chimbote_Zona1
+
+  [ OK ] zone boundary    Chimbote_Zona1.shp
+  [ OK ] road network     rutas_Chimbote_Zona1.shp
+  [ OK ] intersections    puntos_Chimbote_Zona1.shp
+  [ OK ] census blocks    manzanas_Chimbote_Zona1.shp
+
+  [ OK ] Chimbote_Zona1.shp                 CRS WGS 84 / UTM zone 17S
+  [ OK ] rutas_Chimbote_Zona1.shp           CRS WGS 84 / UTM zone 17S
+  [ OK ] puntos_Chimbote_Zona1.shp          CRS WGS 84 / UTM zone 17S
+  [ OK ] manzanas_Chimbote_Zona1.shp        CRS WGS 84 / UTM zone 17S
+
+  [ OK ] rutas_Chimbote_Zona1.shp: has 'start_node'
+  [ OK ] rutas_Chimbote_Zona1.shp: has 'end_node'
+  [ OK ] rutas_Chimbote_Zona1.shp: has 'cost'
+  [ OK ] rutas_Chimbote_Zona1.shp: has 'lanes'
+  [ OK ] puntos_Chimbote_Zona1.shp: has 'fid'
+  [ OK ] puntos_Chimbote_Zona1.shp: has 'is_shelter'
+  [ OK ] census blocks: population field 'T_TOTAL', total 42,075 over 388 blocks
+  [WARN] 8 block(s) have a missing or non-numeric 'T_TOTAL'; they will receive no population
+
+  [ OK ] network: 3621 nodes, 4046 links, 5 safe zone(s)
+  [WARN] network is in 2 disconnected pieces
+  [WARN] 884 of 4468 starting points (19.8%) cannot reach ANY safe zone
+  [WARN] 32 link(s) shorter than 1 m (min 0.015 m) will produce implausible densities
+
+Usable, with 4 warning(s). Read them before trusting results.

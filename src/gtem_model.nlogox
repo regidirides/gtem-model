@@ -1,0 +1,2225 @@
+<?xml version="1.0" encoding="utf-8"?>
+<model version="NetLogo 7.0.4" snapToGrid="false">
+  <code><![CDATA[extensions [gis csv vid]
+
+
+
+
+
+globals [
+  zone-dataset
+  intersections-dataset
+  roads-dataset
+  blocks-dataset
+  safe-zone-nodes
+  origin-nodes
+  history-time
+  history-evacuees
+  history-speed
+  initial-population-simulated
+  evacuees-safe
+  evacuees-safe-adults
+  evacuees-safe-elderly
+  evacuees-safe-children
+  stranded-agents
+  initial-stranded-agents
+  vulnerability-origin-data
+  current-seed
+  history-speed-min
+  history-speed-max
+  history-moving
+  metres-per-patch
+  automation-mode?
+  video-margin-right
+  video-margin-top
+  video-map-max-pxcor
+  history-evacuees-adults
+  history-evacuees-elderly
+  history-evacuees-children
+  history-speed-adults
+  history-speed-elderly
+  history-speed-children
+  map-draw-width
+  map-draw-height
+  caught-in-transit
+  agents-requested
+  simulation-end-reason
+  run-finished?
+  input-warnings
+  census-population-total
+  blocks-missing-population
+  agents-snapped-far
+  unroutable-node-count
+]
+
+;;====================================================================== ENVIRONMENT DECLARATION
+
+
+
+;;====================================================================== AGENT DECLARATIONS
+
+breed [ nodes node ]
+breed [ adults adult ]
+breed [ elderly elder ]
+breed [ children child ]
+breed [ hud-items hud-item ]
+
+nodes-own [
+  node-id
+  node-name
+  is-safe-zone
+  population
+  node-cost
+  previous-node
+  my-safe-zone-cost
+  my-next-node
+  has-base-route?
+]
+
+adults-own [
+  next-node
+  my-speed
+  ticks-to-wait
+  ready-to-move?
+  original-color
+  current-link
+  my-origin-node
+  orig-x
+  orig-y
+]
+
+elderly-own [
+  next-node
+  my-speed
+  ticks-to-wait
+  ready-to-move?
+  original-color
+  current-link
+  my-origin-node
+  orig-x
+  orig-y
+]
+
+children-own [
+
+  next-node
+  my-speed
+  ticks-to-wait
+  ready-to-move?
+  original-color
+  current-link
+  my-origin-node
+  orig-x
+  orig-y
+]
+
+hud-items-own [
+  hud-role
+]
+
+
+links-own [
+  cost
+  lanes
+  current-calculated-speed
+  active-agent-count
+  min-speed-recorded
+  max-density-recorded
+  current-density
+  density-integral
+  congested-seconds
+]
+
+;;======================================================================
+;; 1. SETUP PROCEDURES
+;;======================================================================
+to setup
+  clear-all
+  ask patches [ set pcolor white ]
+  ifelse (use-fixed-seed?)[set current-seed input-seed
+  random-seed current-seed][set current-seed new-seed
+  random-seed current-seed]
+
+  ;;set metres-per-patch 5
+  load-gis-datasets
+
+  setup-world-scale
+
+  setup-blocks
+  setup-nodes
+  setup-routes
+  set safe-zone-nodes (nodes with [ is-safe-zone = 1 ])
+  set origin-nodes (nodes with [ is-safe-zone = 0 ])
+  set automation-mode? false
+  output-print (word "Origin nodes: " count origin-nodes)
+  output-print (word "Safe zones: " count safe-zone-nodes)
+  ;; A zone with nowhere to evacuate to is a data error, not a result. Reporting
+  ;; "100% stranded" would be a plausible-looking output folder built on a
+  ;; mistake, which is exactly what must never happen.
+  if not any? safe-zone-nodes [
+    error (word "No safe zones in '" input-zone "'. At least one point in "
+                "puntos_" input-zone ".shp must have is_shelter = 1, "
+                "otherwise nobody has anywhere to evacuate to.")
+  ]
+  set history-time []
+  set history-evacuees []
+  set history-speed []
+  set history-speed-min []
+  set history-speed-max []
+  set history-moving []
+  set history-evacuees-adults []
+  set history-evacuees-elderly []
+  set history-evacuees-children []
+  set history-speed-adults []
+  set history-speed-elderly []
+  set history-speed-children []
+  set evacuees-safe 0
+  set evacuees-safe-adults 0
+  set evacuees-safe-elderly 0
+  set evacuees-safe-children 0
+  set run-finished? false
+  set stranded-agents 0
+  set initial-stranded-agents 0
+  set vulnerability-origin-data []
+  set input-warnings []
+  set unroutable-node-count 0
+  reset-ticks
+  update-video-overlay
+end
+
+;; Selects blocks in proportion to their census population T_TOTAL.
+to-report block-population [ census-block ]
+  ;; Population of one census block, or -1 when no usable attribute exists.
+  ;;
+  ;; gis:property-value RAISES if the column is absent -- it does not return a
+  ;; non-number -- so every read must be guarded. Without this, GTEM crashed on
+  ;; any dataset lacking T_TOTAL, including the Arahama benchmark case.
+  ;;
+  ;; Accepts T_TOTAL (Peruvian INEI census), Population and POP, in that order.
+  foreach ["T_TOTAL" "Population" "POP"] [ field ->
+    let value -1
+    carefully [
+      let raw gis:property-value census-block field
+      ifelse is-number? raw
+        [ set value raw ]
+        [ if is-string? raw and raw != "" [ set value read-from-string raw ] ]
+    ] [ set value -1 ]
+    if is-number? value and value >= 0 [ report value ]
+  ]
+  report -1
+end
+
+to-report block-weight [ block ]
+  let value block-population block
+  if value < 0 [ report 0 ]
+  report value
+end
+
+to-report choose-weighted-block [ block-list ]
+  let total-weight sum map [ block -> block-weight block ] block-list
+  if total-weight <= 0 [ report one-of block-list ]
+
+  let draw random-float total-weight
+  let cumulative 0
+  let index 0
+  while [ index < length block-list ] [
+    let block item index block-list
+    set cumulative cumulative + block-weight block
+    if cumulative >= draw [ report block ]
+    set index index + 1
+  ]
+  report last block-list
+end
+
+to-report data-folder-path
+  ;; Absolute path to the study-area folder, supplied by the driver.
+  ;; NetLogo resolves relative paths from the MODEL FILE's own directory. This
+  ;; model lives in src/, so the fallback used when the model is opened directly
+  ;; in the NetLogo GUI must climb one level to reach data/.
+  ifelse data-root = ""
+    [ report "../data/" ]
+    [ report (word data-root "/") ]
+end
+
+to load-gis-datasets
+  ;; input-zone is ALREADY e.g. "Chimbote_Zona1"
+
+  ;; 1. Build the base folder
+  let base-path (word data-folder-path input-zone "/")
+
+  output-print (word "Loading data from: " base-path)
+
+  ;; 2. Build the file names directly from the input
+  set zone-dataset gis:load-dataset (word base-path input-zone ".shp")
+  set intersections-dataset gis:load-dataset (word base-path "puntos_" input-zone ".shp")
+  set roads-dataset gis:load-dataset (word base-path "rutas_" input-zone ".shp")
+  set blocks-dataset gis:load-dataset (word base-path "manzanas_" input-zone ".shp")
+end
+
+to setup-blocks
+  ;; (This procedure does not change state; it only draws what was loaded)
+  gis:set-drawing-color [90 90 90 128]
+  gis:fill blocks-dataset 0.7
+  output-print "Census blocks filled successfully."
+end
+
+to setup-world-scale
+  ;; 1. Load the zone file
+  let base-path (word data-folder-path input-zone "/")
+  let reference-file (word base-path input-zone ".shp")
+
+  if not file-exists? reference-file [
+    error (word "Zone shapefile not found: " reference-file)
+  ]
+
+  let study-zone gis:load-dataset reference-file
+
+  ;; 2. Get the real shapefile extent (in metres)
+  let envelope gis:envelope-of study-zone
+  let x-min item 0 envelope
+  let x-max item 1 envelope
+  let y-min item 2 envelope
+  let y-max item 3 envelope
+
+  let real-width (x-max - x-min)
+  let real-height (y-max - y-min)
+
+  ;; =========================================================
+  ;; 3. ISOTROPIC SCALE
+  ;; =========================================================
+  ;; metres-per-patch is the SINGLE authoritative length scale. It is:
+  ;;   - isotropic  : identical on the x and y axes, by construction below;
+  ;;   - unrounded  : no ceiling, so the value is the true metres per patch;
+  ;;   - independent of the HUD: the drawing area is a fixed model constant,
+  ;;     so changing the video legend can never change how fast agents walk.
+  ;;
+  ;; Deriving the two envelope axes independently, or rounding the scale, would
+  ;; make distances disagree with the map: on Chimbote_Zona1 the two axis scales
+  ;; are 3.9909 and 4.8292 m/patch, and rounding to 5 would overstate every
+  ;; distance by 3.4%, making agents walk that much slower than nominal.
+  let patch-width world-width
+  let patch-height world-height
+
+  ;; Fixed drawing area, in patches. Deliberately NOT derived from the HUD
+  ;; margins below: rendering must not feed back into the physics.
+  set map-draw-width 811
+  set map-draw-height 511
+
+  ;; HUD geometry: used only for drawing the video overlay.
+  set video-margin-right 170
+  set video-margin-top 90
+  set video-map-max-pxcor (max-pxcor - video-margin-right)
+  if video-map-max-pxcor < (min-pxcor + 50) [ set video-map-max-pxcor max-pxcor ]
+
+  let scale-x real-width / map-draw-width
+  let scale-y real-height / map-draw-height
+
+  ;; One scale for both axes: the larger, so the whole zone fits.
+  set metres-per-patch max (list scale-x scale-y)
+
+  if metres-per-patch <= 0 [
+    error (word "Degenerate zone extent: " real-width " x " real-height
+                " m. Check the CRS of " reference-file
+                " - GTEM requires a projected, metric CRS (not lat/lon).")
+  ]
+
+  output-print (word " Scale: 1 patch = " (precision metres-per-patch 4) " metres (isotropic)")
+
+  ;; =========================================================
+  ;; 4. Apply the spatial envelope (WITHOUT resize-world)
+  ;; =========================================================
+  ;; Both extents use the SAME metres-per-patch, so the applied transform is
+  ;; isotropic by construction.
+  let envelope-width  (metres-per-patch * patch-width)
+  let envelope-height (metres-per-patch * patch-height)
+  gis:set-world-envelope (list x-min (x-min + envelope-width) y-min (y-min + envelope-height))
+
+  ;; --- Assertions: fail loudly rather than produce quietly-wrong distances.
+  let applied-x (envelope-width / patch-width)
+  let applied-y (envelope-height / patch-height)
+  if abs (applied-x - applied-y) > 1.0E-9 [
+    error (word "Anisotropic world scale: x=" applied-x " y=" applied-y
+                " m/patch. Distances would be direction-dependent.")
+  ]
+  if real-width > (metres-per-patch * map-draw-width) + 1.0E-6 [
+    error (word "Zone width " real-width " m does not fit the drawing area.")
+  ]
+  if real-height > (metres-per-patch * map-draw-height) + 1.0E-6 [
+    error (word "Zone height " real-height " m does not fit the drawing area.")
+  ]
+
+  output-print (word " Map fitted to fixed window of: " patch-width " x " patch-height " patches")
+end
+to setup-nodes
+  foreach gis:feature-list-of intersections-dataset [ punto ->
+    let vertex-list gis:vertex-lists-of punto
+
+    if (not empty? vertex-list) and (not empty? (first vertex-list)) [
+      create-nodes 1 [
+        ;; 1. First obtain the coordinate
+        let coord gis:location-of (first first vertex-list)
+
+        ;; 2. If the coordinate is empty (it fell outside the map), kill the node.
+        ifelse empty? coord [
+          die
+        ]
+        [
+          ;; 3. If all is well, position and configure it
+          setxy item 0 coord item 1 coord
+
+          set my-next-node nobody  ;; Guard against nulls
+          set has-base-route? false
+          set node-id gis:property-value punto "FID"
+          set is-safe-zone gis:property-value punto "is_shelter"
+          ;; Optional. Municipal users should be able to label a safe zone
+          ;; "Colegio San Pedro" rather than read "626". Absent from the
+          ;; current shapefiles, so the reader must tolerate a missing column.
+          set node-name ""
+          carefully [
+            let raw gis:property-value punto "name"
+            if is-string? raw [ set node-name raw ]
+          ] [ set node-name "" ]
+          set population 0
+
+          set shape "x"
+          set color ifelse-value is-safe-zone = 1 [ red ] [ gray ]
+          set size ifelse-value is-safe-zone = 1 [ 70 / metres-per-patch ] [ 0 ]
+        ]
+      ]
+    ]
+  ]
+  output-print (word "Valid nodes created: " count nodes)
+end
+
+to setup-routes
+  foreach gis:feature-list-of roads-dataset [ linea ->
+    let start-id gis:property-value linea "start_node"
+    let end-id   gis:property-value linea "end_node"
+    let line-cost  gis:property-value linea "cost"
+    let line-lanes gis:property-value linea "lanes"
+
+    let start-turtle one-of nodes with [ node-id = start-id ]
+    let end-turtle   one-of nodes with [ node-id = end-id ]
+
+    if start-turtle != nobody and end-turtle != nobody and start-turtle != end-turtle [
+      ask start-turtle [
+        create-link-with end-turtle [
+          set cost line-cost
+          set lanes line-lanes
+          set min-speed-recorded base-walking-speed
+          set max-density-recorded 0
+          set density-integral 0
+          set congested-seconds 0
+          set color [90 90 90 128]
+        ]
+      ]
+    ]
+  ]
+
+  output-print (word "Roads (links) created: " count links)
+end
+
+;;======================================================================
+;; 2. ROUTE CALCULATION PROCEDURES
+;;======================================================================
+
+;;======================================================================
+;; 3. SIMULATION PROCEDURES (GO)
+;;======================================================================
+
+to setup-people
+  if not is-number? departure-mean [
+    error "departure-mean must be a number (minutes), e.g. 7."
+  ]
+
+  ;; Re-seed from the run's seed before ANY agent is placed.
+  ;; In NetLogo, "[reporter] of agentset" returns its results in random order
+  ;; and therefore consumes random numbers. Extracting the topology from
+  ;; Python (route pre-computation) does exactly that, so without this line
+  ;; agent placement would depend on how many reports the driver happened to
+  ;; issue beforehand -- the same seed and config could give different results.
+  ;; Offset by 1 so population placement does not reuse the stream prefix that
+  ;; setup already consumed.
+  random-seed (current-seed + 1)
+  let block-list gis:feature-list-of blocks-dataset
+
+  if empty? block-list [
+    error "No census blocks loaded. Check that the blocks shapefile exists and is not empty."
+  ]
+
+  check-input-quality block-list
+  repeat total-adults [
+    let my-block choose-weighted-block block-list
+
+    create-adults 1 [
+      set color orange
+      set shape "circle"
+      set size 2.5
+
+      ;; Pass the block so the agent is placed inside it
+      setup-agent-from-block my-block
+    ]
+  ]
+
+  ;; --- ELDERLY ---
+  repeat total-elderly [
+    let my-block choose-weighted-block block-list
+    create-elderly 1 [
+      set color gray
+      set shape "circle"
+      set size 2.5
+      setup-agent-from-block my-block
+    ]
+  ]
+
+  ;; --- CHILDREN ---
+  repeat total-children [
+    let my-block choose-weighted-block block-list
+    create-children 1 [
+      set color yellow
+      set shape "circle"
+      set size 2.5
+      setup-agent-from-block my-block
+    ]
+  ]
+  let total-created-count (count adults + count elderly + count children)
+  output-print (word "People created (by type): " total-created-count)
+  output-print (word "  Adults: " count adults)
+  output-print (word "  Elderly: " count elderly)
+  output-print (word "  Children: " count children)
+  set run-finished? false
+  set agents-requested (round total-adults + round total-elderly + round total-children)
+  set initial-population-simulated count (turtle-set adults elderly children)
+  set initial-stranded-agents stranded-agents
+  check-snap-quality
+  validate-population-accounting
+
+  output-print (word "Population actually simulated: " initial-population-simulated)
+  output-print (word "People with no access to an evacuation route: " initial-stranded-agents)
+  reset-ticks
+  ask hud-items [ die ]
+  update-video-overlay
+end
+
+;; Creates agents until the requested totals are met.
+to complete-requested-population [ block-list ]
+  let target-adults round total-adults
+  let target-elderly round total-elderly
+  let target-children round total-children
+  let max-attempts ((target-adults + target-elderly + target-children + 1) * 20)
+
+  let attempts 0
+  while [(count adults < target-adults) and (attempts < max-attempts)] [
+    set attempts attempts + 1
+    let my-block choose-weighted-block block-list
+    create-adults 1 [
+      set color orange
+      set shape "circle"
+      set size 2.5
+      setup-agent-from-block my-block
+    ]
+  ]
+
+  set attempts 0
+  while [(count elderly < target-elderly) and (attempts < max-attempts)] [
+    set attempts attempts + 1
+    let my-block choose-weighted-block block-list
+    create-elderly 1 [
+      set color gray
+      set shape "circle"
+      set size 2.0
+      setup-agent-from-block my-block
+    ]
+  ]
+
+  set attempts 0
+  while [(count children < target-children) and (attempts < max-attempts)] [
+    set attempts attempts + 1
+    let my-block choose-weighted-block block-list
+    create-children 1 [
+      set color yellow
+      set shape "circle"
+      set size 1.5
+      setup-agent-from-block my-block
+    ]
+  ]
+end
+
+;; Validates that every requested person was either simulated or counted
+;; as having no access. Discarded people are not redistributed.
+to validate-population-accounting
+  let target-adults round total-adults
+  let target-elderly round total-elderly
+  let target-children round total-children
+  let total-requested (target-adults + target-elderly + target-children)
+  let adults-created count adults
+  let elderly-created count elderly
+  let children-created count children
+  let total-created count (turtle-set adults elderly children)
+  if (total-created + initial-stranded-agents) != total-requested [
+    error (word "Population accounting error. Requested: "
+      total-requested " | simulated: " total-created
+      " | stranded: " initial-stranded-agents ".")
+    stop
+  ]
+  set initial-population-simulated total-created
+end
+
+to setup-agent-path
+  set ready-to-move? false
+  set ticks-to-wait 0
+  set original-color color
+
+  setxy ([xcor] of myself) ([ycor] of myself)
+
+  ;; --- NEXT-HOP LOGIC ---
+  ;; Instead of copying a whole path list, take only the next node
+  set next-node [my-next-node] of myself
+
+  ;; If the node queried does have a valid route:
+  ifelse next-node != nobody [
+
+    face next-node
+    let temp-next-node next-node
+    set current-link [link-with temp-next-node] of myself
+
+    set my-speed free-speed-for breed
+
+    let mean-in-seconds (departure-mean * 60)
+
+    ifelse mean-in-seconds > 0 [
+      let wait-seconds (rayleigh-inverse-cdf random-float 1 mean-in-seconds)
+      set ticks-to-wait (wait-seconds / dt)
+    ] [
+      set ticks-to-wait 0
+    ]
+
+    set color blue
+  ]
+  [
+    ;; If the node has no exit or is disconnected, record the agent as stranded.
+    set stranded-agents stranded-agents + 1
+    die
+  ]
+end
+;; ---------------------------------------------------------------------------
+;; INPUT WARNINGS
+;; Silence must be informative: every fallback that would otherwise be invisible
+;; records a warning here. Python writes these to warnings.log and the PDF.
+;; ---------------------------------------------------------------------------
+to add-warning [ message ]
+  if not member? message input-warnings [
+    set input-warnings lput message input-warnings
+    output-print (word "WARNING: " message)
+  ]
+end
+
+;; Runs once, before any agent is created.
+to check-input-quality [ candidate-blocks ]
+  set input-warnings []
+  set blocks-missing-population 0
+  set census-population-total 0
+  set agents-snapped-far 0
+
+  ;; 1. Population attribute present and numeric?
+  foreach candidate-blocks [ b ->
+    let numeric-value block-population b
+    ifelse numeric-value < 0
+      [ set blocks-missing-population blocks-missing-population + 1 ]
+      [ set census-population-total census-population-total + numeric-value ]
+  ]
+  if blocks-missing-population > 0 [
+    add-warning (word "POPULATION ATTRIBUTE: " blocks-missing-population " of "
+      length candidate-blocks " blocks have a missing or non-numeric T_TOTAL. "
+      "Those blocks receive no population at all.")
+  ]
+  if census-population-total <= 0 [
+    add-warning (word "POPULATION ATTRIBUTE: no usable T_TOTAL, Population or POP column in "
+      length candidate-blocks " blocks. Population is being spread UNIFORMLY, "
+      "ignoring where people actually live. Results are not trustworthy.")
+  ]
+
+  ;; 2. Requested population vs the census layer.
+  let requested (round total-adults + round total-elderly + round total-children)
+  if census-population-total > 0 [
+    let ratio (requested / census-population-total)
+    if ratio < 0.5 or ratio > 1.5 [
+      add-warning (word "POPULATION MISMATCH: " requested " agents requested but the "
+        "census layer totals " census-population-total " ("
+        (precision (ratio * 100) 1) "% of census).")
+    ]
+  ]
+
+  ;; 3. Nodes with no route to any safe zone.
+  let origin-count count nodes with [ is-safe-zone != 1 ]
+  let routed-count count nodes with [ my-next-node != nobody ]
+  set unroutable-node-count (origin-count - routed-count)
+  if unroutable-node-count > 0 and origin-count > 0 [
+    add-warning (word "DISCONNECTED NETWORK: " unroutable-node-count " of " origin-count
+      " road nodes (" (precision (unroutable-node-count / origin-count * 100) 1)
+      "%) have no route to any safe zone. Anyone starting there is counted as stranded.")
+  ]
+
+  ;; 4. Degenerate links.
+  let short-links count links with [ cost < 1 ]
+  if short-links > 0 [
+    add-warning (word "DEGENERATE LINKS: " short-links " links are shorter than 1 m. "
+      "A single agent on such a link produces an implausibly high density.")
+  ]
+end
+
+;; Reported after agents are placed, since it depends on where they landed.
+to check-snap-quality
+  if agents-snapped-far > 0 [
+    add-warning (word "ENTRY DISTANCE: " agents-snapped-far " agents were more than "
+      max-snap-distance " m from the nearest usable road node. They walk that "
+      "distance off-network, at free-flow speed, counted in no link's density.")
+  ]
+  ifelse empty? input-warnings
+    [ output-print "No input warnings." ]
+    [ output-print (word "Input warnings: " length input-warnings) ]
+end
+
+to-report effective-end-minutes
+  ;; The run ends at min(evacuation complete, tsunami ETA).
+  ;; end-of-simulation = 0 means "use the ETA" - never "run forever".
+  if tsunami-eta <= 0 [
+    error (word "tsunami-eta must be greater than 0 minutes (got " tsunami-eta
+                "). It is the time the wave arrives and bounds the whole run.")
+  ]
+  ifelse end-of-simulation > 0
+    [ report min (list end-of-simulation tsunami-eta) ]
+    [ report tsunami-eta ]
+end
+
+;; Called at EVERY exit path from go. Classifies the survivors and checks that
+;; the three terminal outcomes account for every agent requested.
+to finalise-run [ reason ]
+  set run-finished? true
+  set simulation-end-reason reason
+  set caught-in-transit count (turtle-set adults elderly children)
+  ;; Everyone still walking when the wave arrives is a terminal outcome too.
+  ask (turtle-set adults elderly children) [
+    set vulnerability-origin-data lput (list orig-x orig-y ticks 2) vulnerability-origin-data
+  ]
+  set evacuees-safe sum [population] of safe-zone-nodes
+  assert-outcome-conservation
+  update-video-overlay
+  if record-video? [vid:record-view]
+end
+
+;; evacuated-before-eta + caught-in-transit + stranded == agents requested.
+;; Anything else means people have been silently created or destroyed.
+to assert-outcome-conservation
+  let accounted (evacuees-safe + caught-in-transit + stranded-agents)
+  if accounted != agents-requested [
+    error (word "Outcome accounting failure. evacuated " evacuees-safe
+                " + caught-in-transit " caught-in-transit
+                " + stranded " stranded-agents " = " accounted
+                ", but " agents-requested " agents were requested. "
+                "Every agent must end in exactly one of the three outcomes.")
+  ]
+end
+
+to go
+  ;; Hard bound: min(evacuation complete, tsunami ETA). Agents still walking
+  ;; when the wave arrives are NOT safe - see finalise-run.
+  if (ticks * dt) >= (effective-end-minutes * 60) [
+    finalise-run "tsunami-eta-or-time-limit"
+    stop
+  ]
+  update-video-overlay
+  if record-video? [vid:record-view]
+  let all-people (turtle-set adults elderly children)
+  if not any? all-people [
+    finalise-run "all-agents-resolved"
+    stop
+  ]
+
+
+  ask links [
+    set active-agent-count 0
+    set current-calculated-speed base-walking-speed
+  ]
+
+
+  ask all-people [
+    if is-link? current-link [
+      ask current-link [ set active-agent-count active-agent-count + 1 ]
+    ]
+  ]
+
+
+  ask links with [active-agent-count > 0] [ calc-link-speed ]
+
+
+
+ ask all-people with [ not ready-to-move? ] [ person-check-reaction-time ]
+
+
+  ask adults with [ ready-to-move? ] [ person-move-smart ]
+  ask elderly with [ ready-to-move? ] [ person-move-smart ]
+  ask children with [ ready-to-move? ] [ person-move-smart ]
+  ask (turtle-set adults elderly children) with [ ready-to-move? ] [ set color speed-color-video my-speed ]
+
+  ;; 2. Record how many arrived (total agents - live agents)
+  let initial-total (total-adults + total-elderly + total-children)
+  set history-time lput ticks history-time
+
+  ;; 1. Count live agents, safe evacuees and stranded agents
+  let live-agents (turtle-set adults elderly children)
+  let live-adults count adults
+  let live-elderly count elderly
+  let live-children count children
+  let live-count (live-adults + live-elderly + live-children)
+  set evacuees-safe sum [population] of safe-zone-nodes
+  ;; Store safe evacuees per age group.
+  set history-evacuees-adults lput evacuees-safe-adults history-evacuees-adults
+  set history-evacuees-elderly lput evacuees-safe-elderly history-evacuees-elderly
+  set history-evacuees-children lput evacuees-safe-children history-evacuees-children
+  set history-moving lput live-count history-moving
+  set history-evacuees lput evacuees-safe history-evacuees
+
+  ;; 2. Speed statistics (mean, min, max)
+  ifelse live-count > 0 [
+    ;; Get the list of speeds
+    let speed-list [my-speed] of live-agents
+
+    ;; PROMEDIO
+    set history-speed lput mean speed-list history-speed
+
+    ;; MINIMUM AND MAXIMUM
+    set history-speed-min lput min speed-list history-speed-min
+    set history-speed-max lput max speed-list history-speed-max
+    set history-speed-adults lput (mean-speed-of adults) history-speed-adults
+    set history-speed-elderly lput (mean-speed-of elderly) history-speed-elderly
+    set history-speed-children lput (mean-speed-of children) history-speed-children
+
+  ] [
+    ;; If nobody is left, everything is 0
+    set history-speed lput 0 history-speed
+    set history-speed-min lput 0 history-speed-min
+    set history-speed-max lput 0 history-speed-max
+    set history-speed-adults lput 0 history-speed-adults
+    set history-speed-elderly lput 0 history-speed-elderly
+    set history-speed-children lput 0 history-speed-children
+  ]
+  if live-count = 0 [
+    finalise-run "evacuation-complete"
+    stop
+  ]
+  tick
+  update-video-overlay
+end
+to-report mean-speed-of [ agent-set ]
+  if not any? agent-set [ report 0 ]
+  report mean [my-speed] of agent-set
+end
+
+to-report free-speed-for [ agent-breed ]
+  if agent-breed = children [ report base-walking-speed * child-speed-factor ]
+  if agent-breed = elderly  [ report base-walking-speed * elderly-speed-factor ]
+  report base-walking-speed
+end
+
+;; THE density-speed relation. Implemented ONCE.
+;;
+;; SOURCE: Mas, E., Suppasri, A., Imamura, F. & Koshimura, S. (2015).
+;;   "Agent-based Simulation of the 2011 Great East Japan Earthquake/Tsunami
+;;    Evacuation: An Integrated Model of Tsunami Inundation and Evacuation."
+;;   Journal of Natural Disaster Science 34, 41.
+;;
+;; Piecewise-linear: free-flow below density-free-flow, falling linearly to
+;; crush-speed at density-crush, constant thereafter. The falling branch is
+;; scaled by each age group's own free speed rather than by an absolute curve,
+;; which preserves the age ordering under congestion.
+;; Implemented once and called from both the agent physics and the road-colour
+;; diagnostic. Two copies with different constants would let the reported road
+;; state drift away from the simulated behaviour.
+to-report speed-for-density [ max-speed density ]
+  if density < density-free-flow [ report max-speed ]
+  if density >= density-crush [ report crush-speed ]
+  let span (density-crush - density-free-flow)
+  if span <= 0 [ report crush-speed ]
+  report max-speed - (density - density-free-flow) * ((max-speed - crush-speed) / span)
+end
+
+to person-move-smart
+  if current-link != nobody [
+    ;; 1. The agent reads the street density
+    let density [current-density] of current-link
+
+    ;; 2-3. Free speed for this age group, reduced by the density law.
+    set my-speed speed-for-density (free-speed-for breed) density
+  ]
+  let available-distance (my-speed * dt) / metres-per-patch
+
+  while [available-distance > 0 and next-node != nobody] [
+
+    face next-node
+    let distance-to-target distance next-node
+
+    ifelse distance-to-target > available-distance [
+      fd available-distance
+      set available-distance 0
+    ]
+    [
+      move-to next-node
+      set available-distance (available-distance - distance-to-target)
+
+      let arrived-at-node next-node
+
+      ;; --- NEXT-HOP LOGIC ---
+      ifelse [is-safe-zone] of arrived-at-node = 1 [
+        ;; If it is a safe zone, the agent is safe and leaves the simulation.
+        ask arrived-at-node [ set population population + 1 ]
+        set evacuees-safe evacuees-safe + 1
+        if breed = adults [ set evacuees-safe-adults evacuees-safe-adults + 1 ]
+        if breed = elderly [ set evacuees-safe-elderly evacuees-safe-elderly + 1 ]
+        if breed = children [ set evacuees-safe-children evacuees-safe-children + 1 ]
+        ;; Outcome codes: 1 = evacuated before the ETA, 2 = caught in transit,
+        ;; 3 = stranded (no route). Recording only survivors would render the
+        ;; worst-affected blocks as blank space on the vulnerability map.
+        set vulnerability-origin-data lput (list orig-x orig-y ticks 1) vulnerability-origin-data
+        die
+      ]
+      [
+        ;; If it is an ordinary street, ask for the next step.
+        let old-node arrived-at-node
+        set next-node [my-next-node] of old-node
+        ifelse next-node = nobody [
+          set stranded-agents stranded-agents + 1
+          set vulnerability-origin-data lput (list orig-x orig-y ticks 3) vulnerability-origin-data
+          die
+        ] [
+          let temp-next-node next-node
+          set current-link [link-with temp-next-node] of old-node
+        ]
+      ]
+    ]
+  ]
+end
+
+to person-check-reaction-time
+  if ticks >= ticks-to-wait [
+    set ready-to-move? true
+    set color original-color
+  ]
+end
+;; Computes effective speed from road density.
+to calc-link-speed
+  let link-lane-count 0
+  ifelse is-string? lanes [ set link-lane-count read-from-string lanes ] [ set link-lane-count lanes ]
+
+  ;; A plain multiplier: 1 = undamaged, 0.5 = half the usable width.
+  ;; Interpreting values above 1 as percentages would make "2" mean 0.02,
+  ;; a fiftyfold reduction rather than a doubling.
+  let road-multiplier road-capacity-multiplier
+  if road-multiplier <= 0 [ set road-multiplier 1 ]
+  let base-road-width average-road-width
+  if base-road-width <= 0 [ set base-road-width 2.8 ]
+  let effective-road-width (base-road-width * road-multiplier)
+  let link-area (link-lane-count * effective-road-width * cost)
+
+  ;; Compute AND STORE the density
+  set current-density 0
+  if link-area > 0 [
+    set current-density (active-agent-count / link-area)
+  ]
+  if current-density > max-density-recorded [
+    set max-density-recorded current-density
+  ]
+
+  ;; Criticality: peak density alone mis-ranks a one-tick spike above twelve
+  ;; minutes of sustained congestion. Accumulate exposure over time as well.
+  set density-integral (density-integral + current-density * dt)
+  if current-density >= density-free-flow [
+    set congested-seconds (congested-seconds + dt)
+  ]
+
+  ;; Same law as the agents use (see speed-for-density), evaluated at the adult
+  ;; free speed so the road diagnostic is comparable between links.
+  let new-speed speed-for-density base-walking-speed current-density
+  set current-calculated-speed new-speed
+  if new-speed < min-speed-recorded [ set min-speed-recorded new-speed ]
+end
+
+;************************************************************
+;           Rayleigh Distribution calculator
+;************************************************************
+
+;; 'cum-rayleigh' was removed (never called)
+;; 'random-rayleigh' was removed (never called)
+
+to-report rayleigh-inverse-cdf [ probability mean-seconds ]
+  let rayleigh-scale mean-seconds * ( sqrt (2 / pi ))
+  report ( sqrt ( -2 * rayleigh-scale ^ 2 * ln(1 - probability) ) )
+end
+
+to load-routes-csv
+  ;; Keeps the no-collapse scenario's coverage as a reference.
+  ;; A person is tied to the same network entry node in every case;
+  ;; then we check whether that entry still has an exit in the current case.
+  let base-zone input-zone
+  let collapse-position position "_colapso" input-zone
+  if collapse-position != false [
+    set base-zone substring input-zone 0 collapse-position
+  ]
+  ;; Python resolves which table to use (cache first, shipped Inputs/ as a
+  ;; fallback) and passes the paths in. Inputs/ is only ever READ.
+  let base-route-path base-routes-file
+  if base-route-path = "" [
+    set base-route-path (word data-folder-path base-zone "/rutas_" base-zone ".csv")
+  ]
+
+  ask nodes [
+    set has-base-route? false
+    set my-next-node nobody
+  ]
+
+  ifelse file-exists? base-route-path [
+    file-open base-route-path
+    while [ not file-at-end? ] [
+      let base-line file-read-line
+      let base-record csv:from-row base-line
+      if item 0 base-record != "NodeID" [
+        let base-node-id read-from-string (word item 0 base-record)
+        let base-node one-of nodes with [node-id = base-node-id]
+        if base-node != nobody [ ask base-node [ set has-base-route? true ] ]
+      ]
+    ]
+    file-close
+  ] [
+    ;; Compatibility for zones that do not yet have a separate base folder.
+    output-print (word "Warning: base network not found: " base-route-path)
+  ]
+
+  let full-route-path routes-file
+  if full-route-path = "" [
+    set full-route-path (word data-folder-path input-zone "/rutas_" input-zone ".csv")
+  ]
+  output-print (word "Loading routes from: " full-route-path)
+
+  if not file-exists? full-route-path [
+    error (word "Route table not found: " full-route-path)
+  ]
+
+  file-open full-route-path
+
+  while [ not file-at-end? ] [
+    let raw-line file-read-line
+    let data-list csv:from-row raw-line
+
+    if item 0 data-list != "NodeID" [
+
+      ;; Force these to be read as exact numbers
+      let node-identifier read-from-string (word item 0 data-list)
+      let next-identifier read-from-string (word item 1 data-list)
+      let route-cost read-from-string (word item 2 data-list)
+
+      let the-node one-of nodes with [node-id = node-identifier]
+
+      if the-node != nobody [
+        ask the-node [
+          set my-safe-zone-cost route-cost
+          set my-next-node one-of nodes with [node-id = next-identifier]
+        ]
+      ]
+    ]
+  ]
+  file-close
+  if not any? nodes with [has-base-route?] [
+    ask nodes with [my-next-node != nobody] [ set has-base-route? true ]
+  ]
+  output-print (word "Entry nodes with a route in the base scenario: " count nodes with [has-base-route?])
+  output-print (word "Entry nodes with a route in the current scenario: " count nodes with [my-next-node != nobody])
+  output-print "Routes loaded and assigned to nodes successfully."
+end
+to setup-agent-from-block [ block-polygon ]
+  ;; 1. Get a random location inside the block
+  let raw-result gis:random-point-inside block-polygon
+  let start-point []
+
+  ifelse is-list? raw-result [ set start-point raw-result ] [ set start-point gis:location-of raw-result ]
+
+  ;; If the geometry fails, the agent is recorded as stranded.
+  if empty? start-point [
+    set stranded-agents stranded-agents + 1
+    die
+  ]
+
+  ;; Place the agent and store its origin (used by the figures)
+  setxy item 0 start-point item 1 start-point
+  set orig-x xcor
+  set orig-y ycor
+
+  ;; =========================================================
+  ;;  CONNECTION LOGIC: nearest base-network entry + route filter
+  ;; =========================================================
+
+  ;; Uses the nearest evacuable entry of the BASE network. This keeps the
+  ;; spatial assignment constant between the base case and its collapses.
+  let base-candidates nodes with [ has-base-route? ]
+  if not any? base-candidates [
+    set stranded-agents stranded-agents + 1
+    die
+  ]
+  let my-first-target min-one-of base-candidates [ distance myself ]
+  ;; Record agents that snap further than max-snap-distance rather than hiding
+  ;; it: they walk that distance off-network, in no link's density.
+  if (distance my-first-target) * metres-per-patch > max-snap-distance [
+    set agents-snapped-far agents-snapped-far + 1
+  ]
+
+  ;; An agent is stranded only when the cut removes the route its original
+  ;; entry had. In the base scenario all these entries are valid.
+  if [my-next-node] of my-first-target = nobody [
+    set stranded-agents stranded-agents + 1
+    set vulnerability-origin-data lput (list orig-x orig-y 0 3) vulnerability-origin-data
+    die
+  ]
+
+  ;; 3. Route assignment
+  set next-node my-first-target
+  set current-link nobody
+  ;; my-path was removed (next-hop only)
+
+  ;; 4. Movement configuration
+  face next-node
+  set my-speed free-speed-for breed
+
+  let mean-in-seconds (departure-mean * 60)
+  ifelse mean-in-seconds > 0 [
+    let wait-seconds (rayleigh-inverse-cdf random-float 1 mean-in-seconds)
+    set ticks-to-wait (wait-seconds / dt)
+  ] [
+    set ticks-to-wait 0
+  ]
+
+  set ready-to-move? false
+  set original-color color
+  set color black
+end
+;; Updates the video counter and speed bar.
+to update-video-overlay
+  draw-video-margin
+  draw-video-speed-bar
+  update-video-counter
+end
+
+;; Keeps the legend area on the right clean.
+to draw-video-margin
+  if video-margin-right = 0 [ set video-margin-right 170 ]
+  if video-map-max-pxcor = 0 [ set video-map-max-pxcor (max-pxcor - video-margin-right) ]
+  ask patches with [pxcor > video-map-max-pxcor] [
+    set pcolor white
+  ]
+end
+
+;; Updates the top indicators of the video overlay.
+to update-video-counter
+  let live-agents count (turtle-set adults elderly children)
+  let video-total initial-population-simulated
+  if video-total = 0 [ set video-total round (total-adults + total-elderly + total-children) ]
+  if video-total = 0 [ set video-total live-agents ]
+  let video-evacuees (video-total - live-agents)
+  if video-evacuees < 0 [ set video-evacuees 0 ]
+  let video-minutes precision ((ticks * dt) / 60) 1
+  if video-margin-top = 0 [ set video-margin-top 90 ]
+  let center-x ((min-pxcor + video-map-max-pxcor) / 2)
+  let counter-x (center-x - 130)
+  let stranded-x (center-x + 165)
+  let counter-y (max-pycor - 18)
+  ask patches with [pxcor >= (center-x - 390) and pxcor <= (center-x + 390) and pycor >= (max-pycor - video-margin-top)] [
+    set pcolor white
+  ]
+  let counter-text (word "t = " video-minutes " min, evacuated: " video-evacuees " of " video-total)
+  ask hud-items with [member? hud-role ["counter-b1" "counter-b2" "counter-b3" "counter-b4"]] [
+    die
+  ]
+  ensure-hud-label-video "counter" counter-x counter-y
+  ask hud-items with [hud-role = "counter"] [
+    set label counter-text
+    set label-color black
+  ]
+  ensure-hud-label-video "stranded" stranded-x counter-y
+  ask hud-items with [hud-role = "stranded"] [
+    set label (word "Stranded people: " initial-stranded-agents)
+    set label-color red
+  ]
+end
+
+;; Draws the vertical speed bar.
+to draw-video-speed-bar
+  let video-min-speed crush-speed
+  let video-max-speed base-walking-speed
+  let margin-center (video-map-max-pxcor + ((max-pxcor - video-map-max-pxcor) / 2))
+  let bar-x (round (margin-center - 10))
+  let bar-width 18
+  let bar-y-min (min-pycor + 70)
+  let bar-y-max (max-pycor - 105)
+  ask patches with [pxcor >= (bar-x - 8) and pxcor <= (bar-x + bar-width + 42) and pycor >= (bar-y-min - 28) and pycor <= (bar-y-max + 36)] [
+    set pcolor white
+  ]
+  ask patches with [pxcor >= bar-x and pxcor <= (bar-x + bar-width) and pycor >= bar-y-min and pycor <= bar-y-max] [
+    let fraction ((pycor - bar-y-min) / (bar-y-max - bar-y-min))
+    let local-speed (video-min-speed + (fraction * (video-max-speed - video-min-speed)))
+    set pcolor speed-color-video local-speed
+  ]
+  ask patches with [
+    (pxcor >= (bar-x - 1) and pxcor <= (bar-x + bar-width + 1) and (pycor = (bar-y-min - 1) or pycor = (bar-y-max + 1))) or
+    (pycor >= (bar-y-min - 1) and pycor <= (bar-y-max + 1) and (pxcor = (bar-x - 1) or pxcor = (bar-x + bar-width + 1)))
+  ] [
+    set pcolor black
+  ]
+  ensure-hud-label-video "speed-title" (bar-x + (bar-width / 2)) (bar-y-max + 22)
+  ask hud-items with [hud-role = "speed-title"] [
+    set label "m/s"
+    set label-color black
+  ]
+  foreach (list base-walking-speed 1.0 0.8 0.6 0.4 crush-speed) [ value ->
+    let role (word "speed-" value)
+    let y-position (bar-y-min + (((value - video-min-speed) / (video-max-speed - video-min-speed)) * (bar-y-max - bar-y-min)))
+    ensure-hud-label-video role (bar-x + bar-width + 22) y-position
+    ask hud-items with [hud-role = role] [
+      set label value
+      set label-color black
+    ]
+    ask patches with [pxcor >= (bar-x - 3) and pxcor <= (bar-x + bar-width + 3) and pycor = (round y-position)] [
+      set pcolor black
+    ]
+  ]
+end
+
+;; Colours shared by agents and the speed bar.
+to-report speed-color-video [ speed ]
+  let fraction ((speed - crush-speed) / (base-walking-speed - crush-speed))
+  if fraction < 0 [ set fraction 0 ]
+  if fraction > 1 [ set fraction 1 ]
+  if fraction < 0.17 [ report red ]
+  if fraction < 0.34 [ report orange ]
+  if fraction < 0.51 [ report yellow ]
+  if fraction < 0.68 [ report green ]
+  if fraction < 0.85 [ report cyan ]
+  report blue
+end
+
+;; Creates or moves auxiliary HUD labels.
+to ensure-hud-label-video [ role x-position y-position ]
+  if not any? hud-items with [hud-role = role] [
+    create-hud-items 1 [
+      set hud-role role
+      set shape "dot"
+      set size 0.1
+      set color white
+      set label-color black
+    ]
+  ]
+  ask hud-items with [hud-role = role] [
+    setxy x-position y-position
+    set shape "dot"
+    set size 0.1
+    set color white
+    set label-color black
+  ]
+end
+to enable-mouse-delete
+  if mouse-down? [
+
+    let mx mouse-xcor
+    let my mouse-ycor
+
+    create-turtles 1 [
+      setxy mx my
+      set hidden? true
+
+      ;; --- KEY FIX ---
+      ;; Store "who am I" (the probe) in a fixed variable.
+      ;; So however many brackets we nest, 'probe' always refers to me.
+      let probe self
+
+      ;; 1. Find the candidate link using the 'probe' variable
+      let candidate-link min-one-of links [
+        ([distance probe] of end1 + [distance probe] of end2) - link-length
+      ]
+
+      ;; 2. Compute the deviation to validate the click (using 'probe')
+      let deviation 999
+      if candidate-link != nobody [
+        ask candidate-link [
+          set deviation ([distance probe] of end1 + [distance probe] of end2) - link-length
+        ]
+      ]
+
+      ;; 3. If the deviation is small (e.g. < 0.5) the click is valid
+      if candidate-link != nobody and deviation < 0.5 [
+
+        ask candidate-link [
+          ;; Delete both end nodes (the link dies automatically)
+          ask both-ends [ die ]
+          ;; (The link dies on its own, but just in case)
+          die
+        ]
+        output-print "Link and nodes deleted."
+
+        ;; Pause to avoid click bounce
+        while [mouse-down?] [ ]
+      ]
+
+      ;; 4. The probe dies
+      die
+    ]
+  ]
+end
+to enable-create-safe-zone
+  ;; Act only while the mouse button is held down
+  if mouse-down? [
+
+    ;; 1. Capture where the click happened
+    let mx mouse-xcor
+    let my mouse-ycor
+
+    ;; 2. Find the node nearest the click
+    ;;    (Uses 'distancexy', measuring straight from the node to x,y)
+    let candidate-node min-one-of nodes [ distancexy mx my ]
+
+    ;; 3. VALIDATION (permissive)
+    ;;    If a node was found and the click was within 5 'metres' of it...
+    if candidate-node != nobody and [distancexy mx my] of candidate-node < 5 [
+
+      ask candidate-node [
+        ;; --- TOGGLE ---
+        ifelse is-safe-zone = 0 [
+          ;; CONVERT TO SAFE ZONE
+          set is-safe-zone 1
+          set color blue
+          set size 150   ;; large
+          set label "SAFE ZONE"
+        ]
+        [
+          ;; REVERT TO NORMAL
+          set is-safe-zone 0
+          set color blue
+          set size 0.5  ;; Small
+          set label ""
+        ]
+      ]
+
+      ;; 4. Refresh the global agentsets immediately
+      set safe-zone-nodes (nodes with [ is-safe-zone = 1 ])
+      set origin-nodes (nodes with [ is-safe-zone = 0 ])
+
+      output-print (word "Change applied. Current safe zones: " count safe-zone-nodes)
+
+      ;; 5. SAFETY PAUSE (anti-bounce)
+      ;;    Execution freezes here until the mouse button is released.
+      ;;    This stops the node flickering on/off while the button is held.
+      while [mouse-down?] [ ]
+    ]
+  ]
+end
+]]></code>
+  <widgets>
+    <view x="242" wrappingAllowedX="false" y="8" frameRate="30.0" minPycor="0" height="667" showTickCounter="true" patchSize="1.203" fontSize="10" wrappingAllowedY="false" width="1088" tickCounterLabel="ticks" maxPycor="600" updateMode="0" maxPxcor="980" minPxcor="0"></view>
+    <button x="10" y="119" height="58" disableUntilTicks="false" forever="false" kind="Observer" width="79" display="load routes">load-routes-csv</button>
+    <button x="10" y="182" height="57" disableUntilTicks="false" forever="false" kind="Observer" width="82" display="load agents">setup-people</button>
+    <button x="10" y="247" height="61" disableUntilTicks="false" forever="true" kind="Observer" width="82" display="go">go</button>
+    <switch x="10" y="314" height="57" on="false" variable="use-fixed-seed?" width="111" display="use-fixed-seed?"></switch>
+    <input x="9" multiline="false" y="501" height="60" variable="end-of-simulation" type="number" width="100">23.0</input>
+    <input x="9" multiline="false" y="760" height="60" variable="tsunami-eta" type="number" width="221">23.0</input>
+    <input x="9" multiline="false" y="825" height="60" variable="max-snap-distance" type="number" width="221">50.0</input>
+    <input x="9" multiline="false" y="890" height="60" variable="routes-file" type="string" width="221"></input>
+    <input x="9" multiline="false" y="955" height="60" variable="base-routes-file" type="string" width="221"></input>
+    <input x="9" multiline="false" y="1600" height="60" variable="data-root" type="string" width="221">../data</input>
+    <input x="9" multiline="false" y="1020" height="60" variable="base-walking-speed" type="number" width="221">1.33</input>
+    <input x="9" multiline="false" y="1085" height="60" variable="child-speed-factor" type="number" width="221">0.8</input>
+    <input x="9" multiline="false" y="1150" height="60" variable="elderly-speed-factor" type="number" width="221">0.7</input>
+    <input x="9" multiline="false" y="1215" height="60" variable="crush-speed" type="number" width="221">0.2</input>
+    <input x="9" multiline="false" y="1280" height="60" variable="density-free-flow" type="number" width="221">0.3</input>
+    <input x="9" multiline="false" y="1345" height="60" variable="density-crush" type="number" width="221">3.0</input>
+    <switch x="11" y="632" height="61" on="false" variable="record-video?" width="78" display="record-video?"></switch>
+    <button x="11" y="698" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="107" display="start recording">vid:start-recorder</button>
+    <input x="98" multiline="false" y="119" height="60" variable="total-adults" type="number" width="131">11328.0</input>
+    <input x="97" multiline="false" y="184" height="60" variable="total-children" type="number" width="133">4016.0</input>
+    <input x="96" multiline="false" y="250" height="60" variable="total-elderly" type="number" width="133">1917.0</input>
+    <monitor x="127" precision="17" y="314" height="60" fontSize="11" width="103">current-seed</monitor>
+    <input x="10" multiline="false" y="378" height="60" variable="input-seed" type="number" width="220">516546.0</input>
+    <slider x="10" step="0.1" y="443" max="10" width="219" display="dt" height="50" min="0" direction="Horizontal" default="10.0" variable="dt"></slider>
+    <input x="115" multiline="false" y="501" height="60" variable="average-road-width" type="number" width="115">2.8</input>
+    <input x="9" multiline="false" y="566" height="60" variable="road-capacity-multiplier" type="number" width="221">1.0</input>
+    <input x="96" multiline="false" y="632" height="60" variable="departure-mean" type="number" width="134">5.0</input>
+    <button x="124" y="699" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="107" display="save recording">vid:save-recording "gtem_run.mp4"  </button>
+    <button x="149" y="3" height="47" disableUntilTicks="false" forever="false" kind="Observer" width="79" display="setup">setup</button>
+    <input x="8" multiline="false" y="53" height="60" variable="input-zone" type="string" width="221">Chimbote_Zona1_colapso1</input>
+    <note x="8" y="2" backgroundDark="0" fontSize="12" width="133" markdown="false" height="60" textColorDark="-1" textColorLight="-16777216" backgroundLight="0">press SETUP when open a newinput-zone</note>
+  </widgets>
+  <info>## WHAT IS IT?
+
+(a general understanding of what the model is trying to show or explain)
+
+## HOW IT WORKS
+
+(what rules the agents use to create the overall behavior of the model)
+
+## HOW TO USE IT
+
+(how to use the model, including a description of each of the items in the Interface tab)
+
+## THINGS TO NOTICE
+
+(suggested things for the user to notice while running the model)
+
+## THINGS TO TRY
+
+(suggested things for the user to try to do (move sliders, switches, etc.) with the model)
+
+## EXTENDING THE MODEL
+
+(suggested things to add or change in the Code tab to make the model more complicated, detailed, accurate, etc.)
+
+## NETLOGO FEATURES
+
+(interesting or unusual features of NetLogo that the model uses, particularly in the Code tab; or where workarounds were needed for missing features)
+
+## RELATED MODELS
+
+(models in the NetLogo Models Library and elsewhere which are of related interest)
+
+## CREDITS AND REFERENCES
+
+(a reference to the model's URL on the web if it has one, as well as any other necessary credits, citations, and links)</info>
+  <turtleShapes>
+    <shape name="default" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="5"></point>
+        <point x="40" y="250"></point>
+        <point x="150" y="205"></point>
+        <point x="260" y="250"></point>
+      </polygon>
+    </shape>
+    <shape name="airplane" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0"></point>
+        <point x="135" y="15"></point>
+        <point x="120" y="60"></point>
+        <point x="120" y="105"></point>
+        <point x="15" y="165"></point>
+        <point x="15" y="195"></point>
+        <point x="120" y="180"></point>
+        <point x="135" y="240"></point>
+        <point x="105" y="270"></point>
+        <point x="120" y="285"></point>
+        <point x="150" y="270"></point>
+        <point x="180" y="285"></point>
+        <point x="210" y="270"></point>
+        <point x="165" y="240"></point>
+        <point x="180" y="180"></point>
+        <point x="285" y="195"></point>
+        <point x="285" y="165"></point>
+        <point x="180" y="105"></point>
+        <point x="180" y="60"></point>
+        <point x="165" y="15"></point>
+      </polygon>
+    </shape>
+    <shape name="arrow" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="0"></point>
+        <point x="0" y="150"></point>
+        <point x="105" y="150"></point>
+        <point x="105" y="293"></point>
+        <point x="195" y="293"></point>
+        <point x="195" y="150"></point>
+        <point x="300" y="150"></point>
+      </polygon>
+    </shape>
+    <shape name="box" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="285"></point>
+        <point x="285" y="225"></point>
+        <point x="285" y="75"></point>
+        <point x="150" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="135"></point>
+        <point x="15" y="75"></point>
+        <point x="150" y="15"></point>
+        <point x="285" y="75"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="75"></point>
+        <point x="15" y="225"></point>
+        <point x="150" y="285"></point>
+        <point x="150" y="135"></point>
+      </polygon>
+      <line endX="150" startY="285" marked="false" color="255" endY="135" startX="150"></line>
+      <line endX="15" startY="135" marked="false" color="255" endY="75" startX="150"></line>
+      <line endX="285" startY="135" marked="false" color="255" endY="75" startX="150"></line>
+    </shape>
+    <shape name="bug" rotatable="true" editableColorIndex="0">
+      <circle x="96" y="182" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="110" y="127" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <circle x="110" y="75" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <line endX="80" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+      <line endX="220" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+    </shape>
+    <shape name="butterfly" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165"></point>
+        <point x="209" y="199"></point>
+        <point x="225" y="225"></point>
+        <point x="225" y="255"></point>
+        <point x="195" y="270"></point>
+        <point x="165" y="255"></point>
+        <point x="150" y="240"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="165"></point>
+        <point x="89" y="198"></point>
+        <point x="75" y="225"></point>
+        <point x="75" y="255"></point>
+        <point x="105" y="270"></point>
+        <point x="135" y="255"></point>
+        <point x="150" y="240"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="139" y="148"></point>
+        <point x="100" y="105"></point>
+        <point x="55" y="90"></point>
+        <point x="25" y="90"></point>
+        <point x="10" y="105"></point>
+        <point x="10" y="135"></point>
+        <point x="25" y="180"></point>
+        <point x="40" y="195"></point>
+        <point x="85" y="194"></point>
+        <point x="139" y="163"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="162" y="150"></point>
+        <point x="200" y="105"></point>
+        <point x="245" y="90"></point>
+        <point x="275" y="90"></point>
+        <point x="290" y="105"></point>
+        <point x="290" y="135"></point>
+        <point x="275" y="180"></point>
+        <point x="260" y="195"></point>
+        <point x="215" y="195"></point>
+        <point x="162" y="165"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255"></point>
+        <point x="135" y="225"></point>
+        <point x="120" y="150"></point>
+        <point x="135" y="120"></point>
+        <point x="150" y="105"></point>
+        <point x="165" y="120"></point>
+        <point x="180" y="150"></point>
+        <point x="165" y="225"></point>
+      </polygon>
+      <circle x="135" y="90" marked="false" color="255" diameter="30" filled="true"></circle>
+      <line endX="195" startY="105" marked="false" color="255" endY="60" startX="150"></line>
+      <line endX="105" startY="105" marked="false" color="255" endY="60" startX="150"></line>
+    </shape>
+    <shape name="car" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="300" y="180"></point>
+        <point x="279" y="164"></point>
+        <point x="261" y="144"></point>
+        <point x="240" y="135"></point>
+        <point x="226" y="132"></point>
+        <point x="213" y="106"></point>
+        <point x="203" y="84"></point>
+        <point x="185" y="63"></point>
+        <point x="159" y="50"></point>
+        <point x="135" y="50"></point>
+        <point x="75" y="60"></point>
+        <point x="0" y="150"></point>
+        <point x="0" y="165"></point>
+        <point x="0" y="225"></point>
+        <point x="300" y="225"></point>
+        <point x="300" y="180"></point>
+      </polygon>
+      <circle x="180" y="180" marked="false" color="255" diameter="90" filled="true"></circle>
+      <circle x="30" y="180" marked="false" color="255" diameter="90" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="162" y="80"></point>
+        <point x="132" y="78"></point>
+        <point x="134" y="135"></point>
+        <point x="209" y="135"></point>
+        <point x="194" y="105"></point>
+        <point x="189" y="96"></point>
+        <point x="180" y="89"></point>
+      </polygon>
+      <circle x="47" y="195" marked="true" color="-1920102913" diameter="58" filled="true"></circle>
+      <circle x="195" y="195" marked="true" color="-1920102913" diameter="58" filled="true"></circle>
+    </shape>
+    <shape name="circle" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+    </shape>
+    <shape name="circle 2" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+    </shape>
+    <shape name="cow" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="200" y="193"></point>
+        <point x="197" y="249"></point>
+        <point x="179" y="249"></point>
+        <point x="177" y="196"></point>
+        <point x="166" y="187"></point>
+        <point x="140" y="189"></point>
+        <point x="93" y="191"></point>
+        <point x="78" y="179"></point>
+        <point x="72" y="211"></point>
+        <point x="49" y="209"></point>
+        <point x="48" y="181"></point>
+        <point x="37" y="149"></point>
+        <point x="25" y="120"></point>
+        <point x="25" y="89"></point>
+        <point x="45" y="72"></point>
+        <point x="103" y="84"></point>
+        <point x="179" y="75"></point>
+        <point x="198" y="76"></point>
+        <point x="252" y="64"></point>
+        <point x="272" y="81"></point>
+        <point x="293" y="103"></point>
+        <point x="285" y="121"></point>
+        <point x="255" y="121"></point>
+        <point x="242" y="118"></point>
+        <point x="224" y="167"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="73" y="210"></point>
+        <point x="86" y="251"></point>
+        <point x="62" y="249"></point>
+        <point x="48" y="208"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="25" y="114"></point>
+        <point x="16" y="195"></point>
+        <point x="9" y="204"></point>
+        <point x="23" y="213"></point>
+        <point x="25" y="200"></point>
+        <point x="39" y="123"></point>
+      </polygon>
+    </shape>
+    <shape name="cylinder" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+    </shape>
+    <shape name="dot" rotatable="false" editableColorIndex="0">
+      <circle x="90" y="90" marked="true" color="-1920102913" diameter="120" filled="true"></circle>
+    </shape>
+    <shape name="face happy" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="255"></point>
+        <point x="90" y="239"></point>
+        <point x="62" y="213"></point>
+        <point x="47" y="191"></point>
+        <point x="67" y="179"></point>
+        <point x="90" y="203"></point>
+        <point x="109" y="218"></point>
+        <point x="150" y="225"></point>
+        <point x="192" y="218"></point>
+        <point x="210" y="203"></point>
+        <point x="227" y="181"></point>
+        <point x="251" y="194"></point>
+        <point x="236" y="217"></point>
+        <point x="212" y="240"></point>
+      </polygon>
+    </shape>
+    <shape name="face neutral" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="7" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <rectangle endX="240" startY="195" marked="false" color="255" endY="225" startX="60" filled="true"></rectangle>
+    </shape>
+    <shape name="face sad" rotatable="false" editableColorIndex="0">
+      <circle x="8" y="8" marked="true" color="-1920102913" diameter="285" filled="true"></circle>
+      <circle x="60" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <circle x="180" y="75" marked="false" color="255" diameter="60" filled="true"></circle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="150" y="168"></point>
+        <point x="90" y="184"></point>
+        <point x="62" y="210"></point>
+        <point x="47" y="232"></point>
+        <point x="67" y="244"></point>
+        <point x="90" y="220"></point>
+        <point x="109" y="205"></point>
+        <point x="150" y="198"></point>
+        <point x="192" y="205"></point>
+        <point x="210" y="220"></point>
+        <point x="227" y="242"></point>
+        <point x="251" y="229"></point>
+        <point x="236" y="206"></point>
+        <point x="212" y="183"></point>
+      </polygon>
+    </shape>
+    <shape name="fish" rotatable="false" editableColorIndex="0">
+      <polygon color="-1" filled="true" marked="false">
+        <point x="44" y="131"></point>
+        <point x="21" y="87"></point>
+        <point x="15" y="86"></point>
+        <point x="0" y="120"></point>
+        <point x="15" y="150"></point>
+        <point x="0" y="180"></point>
+        <point x="13" y="214"></point>
+        <point x="20" y="212"></point>
+        <point x="45" y="166"></point>
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="135" y="195"></point>
+        <point x="119" y="235"></point>
+        <point x="95" y="218"></point>
+        <point x="76" y="210"></point>
+        <point x="46" y="204"></point>
+        <point x="60" y="165"></point>
+      </polygon>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="75" y="45"></point>
+        <point x="83" y="77"></point>
+        <point x="71" y="103"></point>
+        <point x="86" y="114"></point>
+        <point x="166" y="78"></point>
+        <point x="135" y="60"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="136"></point>
+        <point x="151" y="77"></point>
+        <point x="226" y="81"></point>
+        <point x="280" y="119"></point>
+        <point x="292" y="146"></point>
+        <point x="292" y="160"></point>
+        <point x="287" y="170"></point>
+        <point x="270" y="195"></point>
+        <point x="195" y="210"></point>
+        <point x="151" y="212"></point>
+        <point x="30" y="166"></point>
+      </polygon>
+      <circle x="215" y="106" marked="false" color="255" diameter="30" filled="true"></circle>
+    </shape>
+    <shape name="flag" rotatable="false" editableColorIndex="0">
+      <rectangle endX="75" startY="15" marked="true" color="-1920102913" endY="300" startX="60" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="90" y="150"></point>
+        <point x="270" y="90"></point>
+        <point x="90" y="30"></point>
+      </polygon>
+      <line endX="90" startY="135" marked="true" color="-1920102913" endY="135" startX="75"></line>
+      <line endX="90" startY="45" marked="true" color="-1920102913" endY="45" startX="75"></line>
+    </shape>
+    <shape name="flower" rotatable="false" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="135" y="120"></point>
+        <point x="165" y="165"></point>
+        <point x="180" y="210"></point>
+        <point x="180" y="240"></point>
+        <point x="150" y="300"></point>
+        <point x="165" y="300"></point>
+        <point x="195" y="240"></point>
+        <point x="195" y="195"></point>
+        <point x="165" y="135"></point>
+      </polygon>
+      <circle x="85" y="132" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="130" y="147" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="192" y="85" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="85" y="40" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="177" y="40" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="177" y="132" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="70" y="85" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="130" y="25" marked="true" color="-1920102913" diameter="38" filled="true"></circle>
+      <circle x="96" y="51" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="113" y="68" marked="false" color="255" diameter="74" filled="true"></circle>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="189" y="233"></point>
+        <point x="219" y="188"></point>
+        <point x="249" y="173"></point>
+        <point x="279" y="188"></point>
+        <point x="234" y="218"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="180" y="255"></point>
+        <point x="150" y="210"></point>
+        <point x="105" y="210"></point>
+        <point x="75" y="240"></point>
+        <point x="135" y="240"></point>
+      </polygon>
+    </shape>
+    <shape name="house" rotatable="false" editableColorIndex="0">
+      <rectangle endX="255" startY="120" marked="true" color="-1920102913" endY="285" startX="45" filled="true"></rectangle>
+      <rectangle endX="180" startY="210" marked="false" color="255" endY="285" startX="120" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="15" y="120"></point>
+        <point x="150" y="15"></point>
+        <point x="285" y="120"></point>
+      </polygon>
+      <line endX="270" startY="120" marked="false" color="255" endY="120" startX="30"></line>
+    </shape>
+    <shape name="leaf" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="210"></point>
+        <point x="135" y="195"></point>
+        <point x="120" y="210"></point>
+        <point x="60" y="210"></point>
+        <point x="30" y="195"></point>
+        <point x="60" y="180"></point>
+        <point x="60" y="165"></point>
+        <point x="15" y="135"></point>
+        <point x="30" y="120"></point>
+        <point x="15" y="105"></point>
+        <point x="40" y="104"></point>
+        <point x="45" y="90"></point>
+        <point x="60" y="90"></point>
+        <point x="90" y="105"></point>
+        <point x="105" y="120"></point>
+        <point x="120" y="120"></point>
+        <point x="105" y="60"></point>
+        <point x="120" y="60"></point>
+        <point x="135" y="30"></point>
+        <point x="150" y="15"></point>
+        <point x="165" y="30"></point>
+        <point x="180" y="60"></point>
+        <point x="195" y="60"></point>
+        <point x="180" y="120"></point>
+        <point x="195" y="120"></point>
+        <point x="210" y="105"></point>
+        <point x="240" y="90"></point>
+        <point x="255" y="90"></point>
+        <point x="263" y="104"></point>
+        <point x="285" y="105"></point>
+        <point x="270" y="120"></point>
+        <point x="285" y="135"></point>
+        <point x="240" y="165"></point>
+        <point x="240" y="180"></point>
+        <point x="270" y="195"></point>
+        <point x="240" y="210"></point>
+        <point x="180" y="210"></point>
+        <point x="165" y="195"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="195"></point>
+        <point x="135" y="240"></point>
+        <point x="120" y="255"></point>
+        <point x="105" y="255"></point>
+        <point x="105" y="285"></point>
+        <point x="135" y="285"></point>
+        <point x="165" y="240"></point>
+        <point x="165" y="195"></point>
+      </polygon>
+    </shape>
+    <shape name="line" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="300" startX="150"></line>
+    </shape>
+    <shape name="line half" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="150" startX="150"></line>
+    </shape>
+    <shape name="pentagon" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="15"></point>
+        <point x="15" y="120"></point>
+        <point x="60" y="285"></point>
+        <point x="240" y="285"></point>
+        <point x="285" y="120"></point>
+      </polygon>
+    </shape>
+    <shape name="person" rotatable="false" editableColorIndex="0">
+      <circle x="110" y="5" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90"></point>
+        <point x="120" y="195"></point>
+        <point x="90" y="285"></point>
+        <point x="105" y="300"></point>
+        <point x="135" y="300"></point>
+        <point x="150" y="225"></point>
+        <point x="165" y="300"></point>
+        <point x="195" y="300"></point>
+        <point x="210" y="285"></point>
+        <point x="180" y="195"></point>
+        <point x="195" y="90"></point>
+      </polygon>
+      <rectangle endX="172" startY="79" marked="true" color="-1920102913" endY="94" startX="127" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="195" y="90"></point>
+        <point x="240" y="150"></point>
+        <point x="225" y="180"></point>
+        <point x="165" y="105"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="105" y="90"></point>
+        <point x="60" y="150"></point>
+        <point x="75" y="180"></point>
+        <point x="135" y="105"></point>
+      </polygon>
+    </shape>
+    <shape name="plant" rotatable="false" editableColorIndex="0">
+      <rectangle endX="165" startY="90" marked="true" color="-1920102913" endY="300" startX="135" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="255"></point>
+        <point x="90" y="210"></point>
+        <point x="45" y="195"></point>
+        <point x="75" y="255"></point>
+        <point x="135" y="285"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="255"></point>
+        <point x="210" y="210"></point>
+        <point x="255" y="195"></point>
+        <point x="225" y="255"></point>
+        <point x="165" y="285"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="180"></point>
+        <point x="90" y="135"></point>
+        <point x="45" y="120"></point>
+        <point x="75" y="180"></point>
+        <point x="135" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="180"></point>
+        <point x="165" y="210"></point>
+        <point x="225" y="180"></point>
+        <point x="255" y="120"></point>
+        <point x="210" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="105"></point>
+        <point x="90" y="60"></point>
+        <point x="45" y="45"></point>
+        <point x="75" y="105"></point>
+        <point x="135" y="135"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="165" y="105"></point>
+        <point x="165" y="135"></point>
+        <point x="225" y="105"></point>
+        <point x="255" y="45"></point>
+        <point x="210" y="60"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="135" y="90"></point>
+        <point x="120" y="45"></point>
+        <point x="150" y="15"></point>
+        <point x="180" y="45"></point>
+        <point x="165" y="90"></point>
+      </polygon>
+    </shape>
+    <shape name="sheep" rotatable="false" editableColorIndex="15">
+      <circle x="203" y="65" marked="true" color="-1" diameter="88" filled="true"></circle>
+      <circle x="70" y="65" marked="true" color="-1" diameter="162" filled="true"></circle>
+      <circle x="150" y="105" marked="true" color="-1" diameter="120" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="218" y="120"></point>
+        <point x="240" y="165"></point>
+        <point x="255" y="165"></point>
+        <point x="278" y="120"></point>
+      </polygon>
+      <circle x="214" y="72" marked="false" color="-1920102913" diameter="67" filled="true"></circle>
+      <rectangle endX="179" startY="223" marked="true" color="-1" endY="298" startX="164" filled="true"></rectangle>
+      <polygon color="-1" filled="true" marked="true">
+        <point x="45" y="285"></point>
+        <point x="30" y="285"></point>
+        <point x="30" y="240"></point>
+        <point x="15" y="195"></point>
+        <point x="45" y="210"></point>
+      </polygon>
+      <circle x="3" y="83" marked="true" color="-1" diameter="150" filled="true"></circle>
+      <rectangle endX="80" startY="221" marked="true" color="-1" endY="296" startX="65" filled="true"></rectangle>
+      <polygon color="-1" filled="true" marked="true">
+        <point x="195" y="285"></point>
+        <point x="210" y="285"></point>
+        <point x="210" y="240"></point>
+        <point x="240" y="210"></point>
+        <point x="195" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="276" y="85"></point>
+        <point x="285" y="105"></point>
+        <point x="302" y="99"></point>
+        <point x="294" y="83"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="false">
+        <point x="219" y="85"></point>
+        <point x="210" y="105"></point>
+        <point x="193" y="99"></point>
+        <point x="201" y="83"></point>
+      </polygon>
+    </shape>
+    <shape name="square" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true"></rectangle>
+    </shape>
+    <shape name="square 2" rotatable="false" editableColorIndex="0">
+      <rectangle endX="270" startY="30" marked="true" color="-1920102913" endY="270" startX="30" filled="true"></rectangle>
+      <rectangle endX="240" startY="60" marked="false" color="255" endY="240" startX="60" filled="true"></rectangle>
+    </shape>
+    <shape name="star" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="151" y="1"></point>
+        <point x="185" y="108"></point>
+        <point x="298" y="108"></point>
+        <point x="207" y="175"></point>
+        <point x="242" y="282"></point>
+        <point x="151" y="216"></point>
+        <point x="59" y="282"></point>
+        <point x="94" y="175"></point>
+        <point x="3" y="108"></point>
+        <point x="116" y="108"></point>
+      </polygon>
+    </shape>
+    <shape name="target" rotatable="false" editableColorIndex="0">
+      <circle x="0" y="0" marked="true" color="-1920102913" diameter="300" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+      <circle x="60" y="60" marked="true" color="-1920102913" diameter="180" filled="true"></circle>
+      <circle x="90" y="90" marked="false" color="255" diameter="120" filled="true"></circle>
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true"></circle>
+    </shape>
+    <shape name="tree" rotatable="false" editableColorIndex="0">
+      <circle x="118" y="3" marked="true" color="-1920102913" diameter="94" filled="true"></circle>
+      <rectangle endX="180" startY="195" marked="false" color="-1653716737" endY="300" startX="120" filled="true"></rectangle>
+      <circle x="65" y="21" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="116" y="41" marked="true" color="-1920102913" diameter="127" filled="true"></circle>
+      <circle x="45" y="90" marked="true" color="-1920102913" diameter="120" filled="true"></circle>
+      <circle x="104" y="74" marked="true" color="-1920102913" diameter="152" filled="true"></circle>
+    </shape>
+    <shape name="triangle" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30"></point>
+        <point x="15" y="255"></point>
+        <point x="285" y="255"></point>
+      </polygon>
+    </shape>
+    <shape name="triangle 2" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="30"></point>
+        <point x="15" y="255"></point>
+        <point x="285" y="255"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="151" y="99"></point>
+        <point x="225" y="223"></point>
+        <point x="75" y="224"></point>
+      </polygon>
+    </shape>
+    <shape name="truck" rotatable="false" editableColorIndex="0">
+      <rectangle endX="195" startY="45" marked="true" color="-1920102913" endY="187" startX="4" filled="true"></rectangle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="296" y="193"></point>
+        <point x="296" y="150"></point>
+        <point x="259" y="134"></point>
+        <point x="244" y="104"></point>
+        <point x="208" y="104"></point>
+        <point x="207" y="194"></point>
+      </polygon>
+      <rectangle endX="195" startY="60" marked="false" color="-1" endY="105" startX="195" filled="true"></rectangle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="238" y="112"></point>
+        <point x="252" y="141"></point>
+        <point x="219" y="141"></point>
+        <point x="218" y="112"></point>
+      </polygon>
+      <circle x="234" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <rectangle endX="214" startY="185" marked="true" color="-1920102913" endY="194" startX="181" filled="true"></rectangle>
+      <circle x="144" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <circle x="24" y="174" marked="false" color="255" diameter="42" filled="true"></circle>
+      <circle x="24" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+      <circle x="144" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+      <circle x="234" y="174" marked="true" color="-1920102913" diameter="42" filled="false"></circle>
+    </shape>
+    <shape name="turtle" rotatable="true" editableColorIndex="0">
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="215" y="204"></point>
+        <point x="240" y="233"></point>
+        <point x="246" y="254"></point>
+        <point x="228" y="266"></point>
+        <point x="215" y="252"></point>
+        <point x="193" y="210"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="195" y="90"></point>
+        <point x="225" y="75"></point>
+        <point x="245" y="75"></point>
+        <point x="260" y="89"></point>
+        <point x="269" y="108"></point>
+        <point x="261" y="124"></point>
+        <point x="240" y="105"></point>
+        <point x="225" y="105"></point>
+        <point x="210" y="105"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="105" y="90"></point>
+        <point x="75" y="75"></point>
+        <point x="55" y="75"></point>
+        <point x="40" y="89"></point>
+        <point x="31" y="108"></point>
+        <point x="39" y="124"></point>
+        <point x="60" y="105"></point>
+        <point x="75" y="105"></point>
+        <point x="90" y="105"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="132" y="85"></point>
+        <point x="134" y="64"></point>
+        <point x="107" y="51"></point>
+        <point x="108" y="17"></point>
+        <point x="150" y="2"></point>
+        <point x="192" y="18"></point>
+        <point x="192" y="52"></point>
+        <point x="169" y="65"></point>
+        <point x="172" y="87"></point>
+      </polygon>
+      <polygon color="1504722175" filled="true" marked="false">
+        <point x="85" y="204"></point>
+        <point x="60" y="233"></point>
+        <point x="54" y="254"></point>
+        <point x="72" y="266"></point>
+        <point x="85" y="252"></point>
+        <point x="107" y="210"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="119" y="75"></point>
+        <point x="179" y="75"></point>
+        <point x="209" y="101"></point>
+        <point x="224" y="135"></point>
+        <point x="220" y="225"></point>
+        <point x="175" y="261"></point>
+        <point x="128" y="261"></point>
+        <point x="81" y="224"></point>
+        <point x="74" y="135"></point>
+        <point x="88" y="99"></point>
+      </polygon>
+    </shape>
+    <shape name="wheel" rotatable="false" editableColorIndex="0">
+      <circle x="3" y="3" marked="true" color="-1920102913" diameter="294" filled="true"></circle>
+      <circle x="30" y="30" marked="false" color="255" diameter="240" filled="true"></circle>
+      <line endX="150" startY="285" marked="true" color="-1920102913" endY="15" startX="150"></line>
+      <line endX="285" startY="150" marked="true" color="-1920102913" endY="150" startX="15"></line>
+      <circle x="120" y="120" marked="true" color="-1920102913" diameter="60" filled="true"></circle>
+      <line endX="79" startY="40" marked="true" color="-1920102913" endY="269" startX="216"></line>
+      <line endX="269" startY="84" marked="true" color="-1920102913" endY="221" startX="40"></line>
+      <line endX="269" startY="216" marked="true" color="-1920102913" endY="79" startX="40"></line>
+      <line endX="221" startY="40" marked="true" color="-1920102913" endY="269" startX="84"></line>
+    </shape>
+    <shape name="wolf" rotatable="false" editableColorIndex="0">
+      <polygon color="255" filled="true" marked="false">
+        <point x="253" y="133"></point>
+        <point x="245" y="131"></point>
+        <point x="245" y="133"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="2" y="194"></point>
+        <point x="13" y="197"></point>
+        <point x="30" y="191"></point>
+        <point x="38" y="193"></point>
+        <point x="38" y="205"></point>
+        <point x="20" y="226"></point>
+        <point x="20" y="257"></point>
+        <point x="27" y="265"></point>
+        <point x="38" y="266"></point>
+        <point x="40" y="260"></point>
+        <point x="31" y="253"></point>
+        <point x="31" y="230"></point>
+        <point x="60" y="206"></point>
+        <point x="68" y="198"></point>
+        <point x="75" y="209"></point>
+        <point x="66" y="228"></point>
+        <point x="65" y="243"></point>
+        <point x="82" y="261"></point>
+        <point x="84" y="268"></point>
+        <point x="100" y="267"></point>
+        <point x="103" y="261"></point>
+        <point x="77" y="239"></point>
+        <point x="79" y="231"></point>
+        <point x="100" y="207"></point>
+        <point x="98" y="196"></point>
+        <point x="119" y="201"></point>
+        <point x="143" y="202"></point>
+        <point x="160" y="195"></point>
+        <point x="166" y="210"></point>
+        <point x="172" y="213"></point>
+        <point x="173" y="238"></point>
+        <point x="167" y="251"></point>
+        <point x="160" y="248"></point>
+        <point x="154" y="265"></point>
+        <point x="169" y="264"></point>
+        <point x="178" y="247"></point>
+        <point x="186" y="240"></point>
+        <point x="198" y="260"></point>
+        <point x="200" y="271"></point>
+        <point x="217" y="271"></point>
+        <point x="219" y="262"></point>
+        <point x="207" y="258"></point>
+        <point x="195" y="230"></point>
+        <point x="192" y="198"></point>
+        <point x="210" y="184"></point>
+        <point x="227" y="164"></point>
+        <point x="242" y="144"></point>
+        <point x="259" y="145"></point>
+        <point x="284" y="151"></point>
+        <point x="277" y="141"></point>
+        <point x="293" y="140"></point>
+        <point x="299" y="134"></point>
+        <point x="297" y="127"></point>
+        <point x="273" y="119"></point>
+        <point x="270" y="105"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="-1" y="195"></point>
+        <point x="14" y="180"></point>
+        <point x="36" y="166"></point>
+        <point x="40" y="153"></point>
+        <point x="53" y="140"></point>
+        <point x="82" y="131"></point>
+        <point x="134" y="133"></point>
+        <point x="159" y="126"></point>
+        <point x="188" y="115"></point>
+        <point x="227" y="108"></point>
+        <point x="236" y="102"></point>
+        <point x="238" y="98"></point>
+        <point x="268" y="86"></point>
+        <point x="269" y="92"></point>
+        <point x="281" y="87"></point>
+        <point x="269" y="103"></point>
+        <point x="269" y="113"></point>
+      </polygon>
+    </shape>
+    <shape name="x" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="270" y="75"></point>
+        <point x="225" y="30"></point>
+        <point x="30" y="225"></point>
+        <point x="75" y="270"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="75"></point>
+        <point x="75" y="30"></point>
+        <point x="270" y="225"></point>
+        <point x="225" y="270"></point>
+      </polygon>
+    </shape>
+  </turtleShapes>
+  <linkShapes>
+    <shape name="default" curviness="0.0">
+      <lines>
+        <line x="-0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+        <line x="0.0" visible="true">
+          <dash value="1.0"></dash>
+          <dash value="0.0"></dash>
+        </line>
+        <line x="0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+      </lines>
+      <indicator>
+        <shape name="link direction" rotatable="true" editableColorIndex="0">
+          <line endX="90" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+          <line endX="210" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+        </shape>
+      </indicator>
+    </shape>
+  </linkShapes>
+  <previewCommands>setup repeat 75 [ go ]</previewCommands>
+</model>

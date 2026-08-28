@@ -1,0 +1,39 @@
+Loading data from: /home/you/gtem/data/Chimbote_Zona1/
+ Scale: 1 patch = 4.8292 metres (isotropic)
+ Map fitted to fixed window of: 981 x 601 patches
+Census blocks filled successfully.
+Valid nodes created: 4473
+Roads (links) created: 4046
+Origin nodes: 4468
+Safe zones: 5
+Loading routes from: /home/you/gtem/data/Chimbote_Zona1/rutas_Chimbote_Zona1.csv
+Entry nodes with a route in the base scenario: 3584
+Entry nodes with a route in the current scenario: 3584
+Routes loaded and assigned to nodes successfully.
+WARNING: POPULATION ATTRIBUTE: 8 of 388 blocks have a missing or non-numeric T_TOTAL. Those blocks receive no population at all.
+WARNING: POPULATION MISMATCH: 50 agents requested but the census layer totals 42075 (0.1% of census).
+WARNING: DISCONNECTED NETWORK: 884 of 4468 road nodes (19.8%) have no route to any safe zone. Anyone starting there is counted as stranded.
+WARNING: DEGENERATE LINKS: 32 links are shorter than 1 m. A single agent on such a link produces an implausibly high density.
+People created (by type): 50
+  Adults: 50
+  Elderly: 0
+  Children: 0
+Input warnings: 4
+Population actually simulated: 50
+People with no access to an evacuation route: 0
+GTEM 1.0.0 - zone Chimbote_Zona1
+Running setup...
+Seed 1447152600 - writing to /home/you/gtem/Outputs/Chimbote_Zona1/1447152600
+Route table: /home/you/gtem/data/Chimbote_Zona1/rutas_Chimbote_Zona1.csv
+Input warnings: 4
+Running simulation...
+
+  Evacuated before the tsunami :      0  (  0.0%)
+  NOT evacuated                :     50  (100.0%)
+      caught in transit        :     50
+      stranded (no route)      :      0
+  Run ended                    : tsunami-eta-or-time-limit at 5.0 min
+
+Generating figures and report...
+   PDF report: Report_Chimbote_Zona1_ID1447152600.pdf
+Done. Results in /home/you/gtem/Outputs/Chimbote_Zona1/1447152600

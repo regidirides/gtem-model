@@ -1,0 +1,41 @@
+{
+ "single": [
+  {
+   "label": "TUNAMI-EVAC1\n(dt = 1 s, 4,140 ticks)",
+   "setup_s": 0.7656508610234596,
+   "sim_s": 318.52356125001097,
+   "colour": "#8a8a8a"
+  },
+  {
+   "label": "GTEM v1.0.0\n(dt = 10 s, 402 ticks)",
+   "setup_s": 36.073655527977586,
+   "sim_s": 110.34443722234573,
+   "colour": "#111111"
+  },
+  {
+   "label": "GTEM v1.0.0\n(dt = 1 s, 4,020 ticks)",
+   "setup_s": 36.678109082975425,
+   "sim_s": 1397.037863250007,
+   "colour": "#c62828"
+  }
+ ],
+ "batch": [
+  {
+   "label": "TUNAMI-EVAC1\nsequential (estimated)",
+   "seconds": 1277.1568484441377,
+   "colour": "#8a8a8a"
+  },
+  {
+   "label": "GTEM\n1 worker",
+   "seconds": 718,
+   "colour": "#5a5a5a"
+  },
+  {
+   "label": "GTEM\n4 workers",
+   "seconds": 188,
+   "colour": "#111111"
+  }
+ ],
+ "batch_runs": 4,
+ "note": "Arahama, 2,271 pedestrians, 67 min simulated, identical scenario. Engine only: setup plus simulation, no figures or PDF. Measured on an idle 20-core Apple Silicon machine, mean of 3 runs (1 for GTEM at dt = 1). TUNAMI-EVAC1 batch is extrapolated from its measured single-run time; its harness runs sequentially."
+}

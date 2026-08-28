@@ -1,0 +1,68 @@
+# GTEM — pinned Python dependencies
+#
+# Every version below was verified working together on 2026-08-09
+# (macOS 15 / arm64 / Python 3.10.6 / NetLogo 7.0.4).
+#
+# WHY EVERYTHING IS PINNED
+#   netlogo_runtime.py constructs a NetLogoLink via object.__new__() and sets
+#   private attributes, to work around a JPype import hook. That depends on
+#   pyNetLogo 0.5.2's internal layout. An unpinned pyNetLogo will break GTEM
+#   silently on its next release.
+#
+#   This is not hypothetical: a matplotlib built against NumPy 1.x fails to
+#   import at all under NumPy 2.x. Pinning is what stops that.
+#
+# -----------------------------------------------------------------------------
+# NON-PYTHON PREREQUISITES (cannot be installed with pip)
+#
+#   NetLogo 7.0.4     https://ccl.northwestern.edu/netlogo/
+#                     Windows : C:\Program Files\NetLogo 7.0.4
+#                     macOS   : /Applications/NetLogo 7.0.4
+#                     Linux   : /opt/netlogo-7.0.4
+#                     Or set the NETLOGO_HOME environment variable.
+#
+#   Java 17           BUNDLED WITH NETLOGO. No separate JDK install is needed.
+#                     GTEM uses the JVM inside the NetLogo installation.
+#                     Verified: OpenJDK 17.0.2, bundled with NetLogo 7.0.4.
+#
+#   Verify everything with:   python check_environment.py
+# -----------------------------------------------------------------------------
+
+# --- Simulation engine bridge (exact pins: private APIs are relied upon) -----
+pynetlogo==0.5.2
+JPype1==1.5.0
+
+# --- Numerics and data ------------------------------------------------------
+numpy==2.2.6
+pandas==2.3.3
+networkx==2.8.7
+
+# --- Figures ----------------------------------------------------------------
+# Must be a build compatible with the NumPy pinned above.
+matplotlib==3.10.9
+
+# --- PDF report -------------------------------------------------------------
+# NOTE: fpdf 1.7.2 (PyFPDF) was last released in 2018 and is unmaintained. Its
+# core fonts are Latin-1 only, which is why pdf_report.py transliterates
+# accented characters. Migrating to fpdf2 is a post-release task; it is pinned
+# here so behaviour does not change under us before then.
+fpdf==1.7.2
+
+# --- Geospatial -------------------------------------------------------------
+# Used by check_inputs.py to validate a new city's folder (CRS, attributes,
+# geometry) before a simulation is ever run.
+geopandas==1.1.1
+shapely==2.1.2
+pyproj==3.7.1
+pyogrio==0.11.1
+
+# --- Testing ----------------------------------------------------------------
+pytest==9.1.1
+
+# -----------------------------------------------------------------------------
+# NOT LISTED HERE
+#
+#   osmnx   GTEM does not read OpenStreetMap directly. It will be needed when
+#           automated preparation of a new study area is added; see
+#           docs/ROADMAP.md.
+# -----------------------------------------------------------------------------

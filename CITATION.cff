@@ -1,0 +1,80 @@
+# Citation File Format 1.2.0 — https://citation-file-format.github.io/
+
+cff-version: 1.2.0
+title: "GTEM — Global Tsunami Evacuation Model"
+message: "If you use GTEM in academic work or in an evacuation plan, please cite it."
+type: software
+version: 1.0.0
+date-released: 2026-08-31
+license: MIT
+
+abstract: >-
+  GTEM is an agent-based model of pedestrian tsunami evacuation, designed for
+  use by non-expert staff in coastal local governments. It simulates evacuation
+  over a graph-based road network with age-differentiated and density-dependent
+  walking speeds, stochastic departure times, and user-supplied tsunami arrival
+  times, and produces maps, figures and an automated PDF report. Results are
+  reported against the tsunami arrival time, so people who reach safety after
+  the wave are counted as not evacuated.
+
+keywords:
+  - tsunami
+  - evacuation
+  - agent-based model
+  - disaster risk reduction
+  - pedestrian simulation
+  - NetLogo
+
+authors:
+  - given-names: Erick
+    family-names: Mas
+    affiliation: "International Research Institute of Disaster Science (IRIDeS), Tohoku University, Japan"
+  - given-names: Luis
+    family-names: Moya
+    affiliation: "Pontificia Universidad Catolica del Peru (PUCP), Peru"
+  - given-names: Jheyder
+    family-names: Perez
+    affiliation: "Pontificia Universidad Catolica de Chile (PUC), Chile"
+
+# Funding
+# Coalition for Disaster Resilient Infrastructure (CDRI),
+# CDRI Fellowship Programme 2025-2026.
+
+references:
+  # The density-speed relation implemented in speed-for-density.
+  - type: article
+    title: >-
+      Agent-based Simulation of the 2011 Great East Japan Earthquake/Tsunami
+      Evacuation: An Integrated Model of Tsunami Inundation and Evacuation
+    authors:
+      - given-names: Erick
+        family-names: Mas
+      - given-names: Anawat
+        family-names: Suppasri
+      - given-names: Fumihiko
+        family-names: Imamura
+      - given-names: Shunichi
+        family-names: Koshimura
+    journal: "Journal of Natural Disaster Science"
+    volume: 34
+    start: 41
+    year: 2015
+
+  # The model GTEM was originally derived from.
+  - type: software
+    title: "TUNAMI-EVAC"
+    authors:
+      - given-names: Erick
+        family-names: Mas
+    repository-code: "https://github.com/erick2307/TUNAMI-EVAC"
+
+  - type: software
+    title: "NetLogo"
+    version: "7.0.4"
+    authors:
+      - family-names: Wilensky
+        given-names: Uri
+    institution:
+      name: "Center for Connected Learning and Computer-Based Modeling, Northwestern University"
+    year: 1999
+    url: "https://ccl.northwestern.edu/netlogo/"

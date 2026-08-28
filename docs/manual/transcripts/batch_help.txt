@@ -1,0 +1,16 @@
+usage: batch_main.py [-h] [--input INPUT] [--output OUTPUT] [--workers WORKERS]
+                     [--memory-mb MEMORY_MB] [--seed SEED] [--reports]
+                     [--language {en,es}]
+
+GTEM 1.0.0 - run GTEM scenarios in batch.
+
+options:
+  -h, --help            show this help message and exit
+  --input INPUT         CSV table of scenarios.
+  --output OUTPUT       Folder name inside Outputs/ (default: timestamp).
+  --workers WORKERS     Concurrent JVMs. Each uses up to --memory-mb.
+  --memory-mb MEMORY_MB
+                        Maximum RAM per JVM.
+  --seed SEED           Master seed. Makes the whole batch reproducible.
+  --reports             Also write figures and a PDF for every run (slower).
+  --language {en,es}    Language of the figures and the PDF reports. Default: en.

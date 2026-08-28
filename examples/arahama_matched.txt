@@ -1,0 +1,25 @@
+# Arahama, matched to TUNAMI-EVAC1's validated 2011 scenario.
+#
+# Used by benchmarks/RUNTIME_VS_ANCESTOR.md and by validation/README.md. The
+# population, the arrival time and the effective departure mean come from the
+# ancestor's own BehaviorSpace experiment and from Mas (2012), chapter 4.
+#
+# departure_mean is 40, NOT the ancestor's u = 14. In that model `u` is the
+# lower bound of a family of Rayleigh curves spanning u to the arrival time,
+# from which each agent draws its own mean; the effective mean is about 40 min.
+# Setting 14 here gives GTEM a 26-minute head start. See validation/README.md.
+#
+# Arahama has no population attribute, so people are spread uniformly across
+# building footprints and the run says so in warnings.log.
+
+zone              = Arahama_Zona1
+adults            = 2271
+elderly           = 0
+children          = 0
+departure_mean    = 40
+dt                = 10
+tsunami_eta       = 67
+end_of_simulation = 0
+seed              = 65620156
+recompute_routes  = false
+language          = en

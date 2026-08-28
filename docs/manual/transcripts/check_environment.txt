@@ -1,0 +1,23 @@
+GTEM 1.0.0 - environment check
+  platform: Darwin 25.6.0 (arm64)
+  python:   3.10.6
+  tested against: NetLogo 7.0.4, Java 17.0.2 (bundled with NetLogo 7.0.4)
+
+  [ OK ] numpy          2.2.6        (numerics)
+  [ OK ] pandas         2.3.3        (tables and CSV output)
+  [ OK ] matplotlib     3.10.9       (figures)
+  [ OK ] networkx       2.8.7        (route pre-computation)
+  [ OK ] pynetlogo      0.5.2        (the bridge to the NetLogo engine)
+  [ OK ] jpype          1.5.0        (starting the Java virtual machine)
+  [ OK ] fpdf           1.7.2        (the PDF report)
+  [ OK ] geopandas      1.1.1        (input checking (check_inputs.py))
+  [ OK ] shapely        2.1.2        (geometry)
+  [ OK ] pyproj         3.7.1        (coordinate reference systems)
+  [ OK ] pytest         9.1.1        (the test suite (developers only))
+  [ OK ] NetLogo        /Applications/NetLogo 7.0.4
+  [ OK ] JVM            libjvm.dylib
+  [ OK ] model          gtem_model.nlogox
+  [ OK ] data folder    data
+
+Everything needed is present. GTEM can run on this machine.
+Next step:  python main.py --config examples/config_example.txt

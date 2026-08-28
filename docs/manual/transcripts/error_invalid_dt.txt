@@ -1,0 +1,5 @@
+
+Configuration error:
+Invalid configuration:
+  - 'dt' = 30 seconds is out of range. Acceptable: 0 < dt <= 10. This is the timestep; above 10 s agents cross several links per tick and congestion is systematically under-counted.
+

@@ -1,0 +1,4 @@
+Zone,Adults,Elderly,Children,TR,Count,Vuln_Low,Vuln_High,Tsunami_ETA,Density_Low,Density_High,End_Of_Simulation,DT,Road_Width,Capacity_Multiplier
+Chimbote_Zona1,11328,1917,4016,2,1,11,23,23,0.3,3,30,10,2.8,1
+Chimbote_Zona1_colapso1,11328,1917,4016,2,1,11,23,23,0.3,3,30,10,2.8,1
+Chimbote_Zona1_colapso2,11328,1917,4016,2,1,11,23,23,0.3,3,23,10,2.8,1

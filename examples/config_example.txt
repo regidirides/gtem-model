@@ -1,0 +1,95 @@
+# ============================================================================
+# GTEM run configuration
+#
+# Copy this file, edit the copy, then run:
+#     python main.py --config my_config.txt
+#
+# You never need to edit any Python file.
+# Lines starting with # are comments. Blank lines are ignored.
+# ============================================================================
+
+
+# --- WHICH AREA -------------------------------------------------------------
+# Must match a folder name inside Inputs/ exactly.
+zone                 = Chimbote_Zona1
+
+
+# --- HOW MANY PEOPLE --------------------------------------------------------
+# How many of each group to simulate. They are distributed across the census
+# blocks in proportion to the population attribute of each block.
+adults               = 11328
+elderly              = 1917
+children             = 4016
+
+
+# --- THE TSUNAMI ------------------------------------------------------------
+# REQUIRED. Minutes from the earthquake until the wave arrives.
+# The simulation STOPS at this time. Anyone still walking is counted as
+# NOT evacuated. This is the single most important number in the file.
+tsunami_eta          = 23
+
+
+# --- HOW PEOPLE BEHAVE ------------------------------------------------------
+# Average minutes before a person starts to evacuate, drawn from a Rayleigh
+# distribution. 7 is the reference-paper value. Lower = better prepared.
+departure_mean       = 7
+
+# How far a person may be from the road network at the start, in metres.
+# Anyone further is reported as a warning.
+max_snap_distance    = 50
+
+
+# --- SIMULATION SETTINGS ----------------------------------------------------
+# Seconds of simulated time per step. Must be greater than 0 and at most 10.
+# Larger values run faster but measure congestion less accurately.
+dt                   = 10
+
+# Extra hard stop in minutes. 0 means "stop at the tsunami arrival time",
+# which is almost always what you want.
+end_of_simulation    = 0
+
+# Average usable width of one lane, in metres.
+road_width           = 2.8
+
+# Scales the effective road width. 1 = undamaged roads.
+capacity_multiplier  = 1
+
+
+# --- MAP THRESHOLDS ---------------------------------------------------------
+# Evacuation-time map, in minutes. Below _low is green, above _high is red.
+# Keep these consistent with tsunami_eta so the colours mean something.
+vulnerability_low    = 11
+vulnerability_high   = 17
+
+# Congestion map, in people per square metre.
+density_low          = 0.3
+density_high         = 3
+
+
+# --- REPRODUCIBILITY --------------------------------------------------------
+# 0 = pick a random seed and record it in the results.
+# Any other number = reproduce that exact run.
+seed                 = 0
+
+
+# --- OPTIONAL EXTRAS --------------------------------------------------------
+# Recompute the route table before running. Only needed after the road network
+# changes. Slow.
+recompute_routes     = false
+
+# Measure how much MORE time a full evacuation would need, and how many extra
+# people each additional minute would save. Repeats the simulation once with no
+# time limit, so it roughly doubles the runtime. Off by default.
+time_margin_analysis = false
+
+# Record an MP4 of the simulation. Off by default: it is slow and produces a
+# large file.
+record_video         = false
+video_name           = run.mp4
+
+# Language of the figures and the PDF report: en (English) or es (Spanish).
+# Everything a machine reads - CSV column headers, output file names, the
+# settings above - stays in English whichever you choose, so results from
+# different languages remain directly comparable. Can also be given on the
+# command line as --language es, which overrides this setting.
+language             = en

@@ -1,0 +1,26 @@
+Checking /home/you/gtem/data/Synthetic_Broken
+
+  [ OK ] zone boundary    Synthetic_Broken.shp
+  [ OK ] road network     rutas_Synthetic_Broken.shp
+  [ OK ] intersections    puntos_Synthetic_Broken.shp
+  [ OK ] census blocks    manzanas_Synthetic_Broken.shp
+
+  [ OK ] Synthetic_Broken.shp               CRS WGS 84 / UTM zone 17S
+  [ OK ] rutas_Synthetic_Broken.shp         CRS WGS 84 / UTM zone 17S
+  [ OK ] puntos_Synthetic_Broken.shp        CRS WGS 84 / UTM zone 17S
+  [ OK ] manzanas_Synthetic_Broken.shp      CRS WGS 84 / UTM zone 17S
+
+  [ OK ] rutas_Synthetic_Broken.shp: has 'start_node'
+  [ OK ] rutas_Synthetic_Broken.shp: has 'end_node'
+  [ OK ] rutas_Synthetic_Broken.shp: has 'cost'
+  [ OK ] rutas_Synthetic_Broken.shp: has 'lanes'
+  [ OK ] puntos_Synthetic_Broken.shp: has 'fid'
+  [ OK ] puntos_Synthetic_Broken.shp: has 'is_shelter'
+  [WARN] census blocks: none of ['T_TOTAL', 'Population', 'POP'] found. Population will be spread UNIFORMLY, ignoring where people live.
+
+  [ OK ] network: 18 nodes, 15 links, 1 safe zone(s)
+  [WARN] network is in 3 disconnected pieces
+  [FAIL] 7 of 17 starting points (41.2%) cannot reach ANY safe zone
+  [WARN] 1 link(s) shorter than 1 m (min 0.200 m) will produce implausible densities
+
+Usable, with 4 warning(s). Read them before trusting results.

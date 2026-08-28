@@ -1,0 +1,40 @@
+# GTEM — reproducible conda environment
+#
+#   conda env create -f environment.yml
+#   conda activate gtem
+#   python check_environment.py
+#
+# Versions match requirements.txt exactly and were verified together on
+# 2026-08-09 (Python 3.10.6 / NetLogo 7.0.4 / bundled OpenJDK 17.0.2).
+#
+# NetLogo itself is NOT a conda package and must be installed separately.
+# See requirements.txt for the per-platform install locations.
+
+name: gtem
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  # numerics and data
+  - numpy=2.2.6
+  - pandas=2.3.3
+  - networkx=2.8.7
+  # figures
+  - matplotlib=3.10.9
+  # geospatial (used by check_inputs.py)
+  - geopandas=1.1.1
+  - shapely=2.1.2
+  - pyproj=3.7.1
+  - pyogrio=0.11.1
+  # testing
+  - pytest=9.1.1
+  - pip
+  - pip:
+      # Engine bridge. Exact pins: netlogo_runtime.py relies on pyNetLogo
+      # internals, so any other version may break GTEM silently.
+      - pynetlogo==0.5.2
+      - JPype1==1.5.0
+      # Unmaintained since 2018; pinned so behaviour cannot change under us.
+      - fpdf==1.7.2

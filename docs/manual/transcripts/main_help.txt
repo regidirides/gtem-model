@@ -1,0 +1,11 @@
+usage: main.py [-h] --config CONFIG [--output OUTPUT] [--language {en,es}]
+
+GTEM 1.0.0 - run one evacuation simulation.
+
+options:
+  -h, --help          show this help message and exit
+  --config CONFIG     Path to the run configuration file (see
+                      examples/config_example.txt).
+  --output OUTPUT     Output folder. Default: Outputs/<zone>/<seed>/
+  --language {en,es}  Language of the figures and the PDF report. Overrides the
+                      'language' setting in the configuration file. Default: en.

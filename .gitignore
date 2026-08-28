@@ -1,0 +1,19 @@
+# Results and derived data
+Outputs/
+cache/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+env/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# JVM crash logs
+hs_err_pid*.log
