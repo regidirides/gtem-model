@@ -5,6 +5,9 @@ title: "GTEM — Global Tsunami Evacuation Model"
 message: "If you use GTEM in academic work or in an evacuation plan, please cite it."
 type: software
 version: 1.0.0
+doi: 10.5281/zenodo.22244754
+repository-code: https://github.com/regidirides/gtem-model
+url: https://doi.org/10.5281/zenodo.22244754
 date-released: 2026-08-31
 license: MIT
 
