@@ -1,6 +1,7 @@
 # GTEM — Global Tsunami Evacuation Model
 
 **Version 1.0.0**
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22244754.svg)](https://doi.org/10.5281/zenodo.22244754)
 
 An agent-based model of **pedestrian tsunami evacuation**, built for staff in
 coastal local governments rather than for modelling specialists.
