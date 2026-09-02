@@ -171,6 +171,8 @@ python -m pytest tests/                   # everything, ~30 minutes
   (IRIDeS), Tohoku University, Japan
 - **Dr Luis Moya** — Pontificia Universidad Catolica del Peru (PUCP), Peru
 - **M.Sc. Jheyder Perez** — Pontificia Universidad Catolica de Chile (PUC), Chile
+- **Dr Shunichi Koshimura** - International Research Institute of Disaster Science
+  (IRIDeS), Tohoku University, Japan
 
 GTEM derives from [TUNAMI-EVAC1](https://github.com/erick2307/TUNAMI-EVAC) by
 Erick Mas — a NetLogo model built in 2011–2012 and validated against the 2011
@@ -189,13 +191,14 @@ free redistribution alongside the software.
 
 ## Citing GTEM
 
-See [CITATION.cff](CITATION.cff). Please also cite the source of the
-density–speed relation:
+Please cite the specific version used:
 
-> Mas, E., Suppasri, A., Imamura, F. & Koshimura, S. (2015). Agent-based
-> Simulation of the 2011 Great East Japan Earthquake/Tsunami Evacuation: An
-> Integrated Model of Tsunami Inundation and Evacuation.
-> *Journal of Natural Disaster Science*, 34, 41.
+> Mas, E., Moya, L., Pérez Aguinaga, J. W., & Koshimura, S. (2026).
+> *Global Tsunami Evacuation Model (GTEM)* (Version v1.0.0)
+> [Computer software]. Zenodo.
+> https://doi.org/10.5281/zenodo.22244754
+
+Citation metadata is also available in [CITATION.cff](CITATION.cff).
 
 ## Acknowledgements
 
